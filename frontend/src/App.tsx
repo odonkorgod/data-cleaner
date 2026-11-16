@@ -29,7 +29,7 @@ import type {
 
 /** The groups issues are summarised under, in display order. */
 const CATEGORIES: { id: Category; label: string; hint: string; unit: string }[] = [
-  { id: "missingness", label: "Missingness", hint: "Empty cells.", unit: "cell" },
+  { id: "missingness", label: "Missingness", hint: "Empty cells, or text like “N/A” or “NULL”.", unit: "cell" },
   {
     id: "inconsistent",
     label: "Inconsistent data",

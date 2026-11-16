@@ -1,6 +1,7 @@
 """Apply user-chosen fix steps to a DataFrame.
 
 Steps run in the fixed order defined by ``STEP_ORDER`` in models.py, not the order they arrive.
+They see placeholders like "N/A" as empty cells (see placeholders.py).
 """
 
 import pandas as pd
@@ -8,6 +9,7 @@ import pandas as pd
 from app.categories import MergeError, standardize_mapping
 from app.models import (
     STEP_ORDER,
+    ClearPlaceholders,
     DropDuplicates,
     DropNullRows,
     FillNulls,
@@ -17,6 +19,7 @@ from app.models import (
     FixTypeMismatch,
     StandardizeValues,
 )
+from app.placeholders import placeholder_frame
 from app.rules import suggested_rule
 from app.values import (
     format_number,
@@ -179,12 +182,34 @@ def _drop_duplicates(df: pd.DataFrame, step: DropDuplicates) -> pd.DataFrame:
     return df.drop_duplicates(keep=step.keep)
 
 
+def _restore_placeholders(
+    result: pd.DataFrame, original: pd.DataFrame, placeholders: pd.DataFrame, cleared: set[str]
+) -> pd.DataFrame:
+    """Write back, as uploaded, placeholders that are still missing and weren't cleared."""
+    out = result
+    for column in result.columns:
+        if column in cleared:
+            continue
+        restore = placeholders.loc[result.index, column] & result[column].isna()
+        if restore.any():
+            if out is result:
+                out = result.copy()
+            rows = restore[restore].index
+            out.loc[rows, column] = original.loc[rows, column]
+    return out
+
+
 def apply_steps(df: pd.DataFrame, steps: list[FixStep]) -> pd.DataFrame:
-    steps = [_resolve_percentiles(df, s) if isinstance(s, FixOutliers) else s for s in steps]
+    # Every step treats placeholders ("N/A", "NULL") as the empty cells they stand for.
+    placeholders = placeholder_frame(df)
+    blanked = df.mask(placeholders)
+
+    steps = [_resolve_percentiles(blanked, s) if isinstance(s, FixOutliers) else s for s in steps]
     # sorted() is stable, so steps with the same rank keep the order they were sent in.
     ordered = sorted(steps, key=lambda s: STEP_ORDER[s.op])
 
-    result = df
+    cleared: set[str] = set()
+    result = blanked
     for step in ordered:
         if isinstance(step, StandardizeValues):
             result = _standardize_values(result, step)
@@ -196,8 +221,13 @@ def apply_steps(df: pd.DataFrame, steps: list[FixStep]) -> pd.DataFrame:
             result = _fix_outliers(result, step)
         elif isinstance(step, FillNulls):
             result = _fill_nulls(result, step)
+        elif isinstance(step, ClearPlaceholders):
+            _require_column(result, step.column)
+            cleared.add(step.column)  # they are already empty; just don't restore them
         elif isinstance(step, DropNullRows):
             result = _drop_null_rows(result, step)
         elif isinstance(step, DropDuplicates):
             result = _drop_duplicates(result, step)
+
+    result = _restore_placeholders(result, df, placeholders, cleared)
     return result.reset_index(drop=True)

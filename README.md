@@ -12,7 +12,7 @@ A web app for analysts. Upload a messy CSV, review the data quality issues it fi
 
 The server is stateless, so the browser keeps the file between steps and re-sends it. Uploads are capped at 25 MB (set `MAX_UPLOAD_MB` to change it).
 
-**Untouched data stays untouched.** Every cell is read as text and only empty cells count as missing, so leading zeros (`00123`), values like `NA` or `None`, and integer formatting survive. The cleaned file is written with the upload's delimiter, encoding and line endings. Numbers are only parsed where a check or fix needs them (mean, median, outliers, type mismatch). See `backend/app/csv_io.py`.
+**Untouched data stays untouched.** Every cell is read as text, so leading zeros (`00123`) and integer formatting survive. Placeholders like `N/A` or `NULL` count as missing values (see below) but are written back exactly as uploaded unless the user picks a fix for them. The cleaned file is written with the upload's delimiter, encoding and line endings. Numbers are only parsed where a check or fix needs them (mean, median, outliers, type mismatch). See `backend/app/csv_io.py`.
 
 ### Fix steps
 
@@ -25,6 +25,7 @@ Each fix is a small JSON object discriminated by `op`, validated with Pydantic (
 {"op": "fix_outliers", "column": "age", "lower": 18, "upper": 90, "action": "cap"}
 {"op": "fix_outliers", "column": "income", "upper_pct": 99, "action": "cap"}
 {"op": "fill_nulls", "column": "age", "strategy": "median"}
+{"op": "clear_placeholders", "column": "age"}
 {"op": "drop_null_rows", "column": "name"}
 {"op": "drop_duplicates", "keep": "first"}
 ```
@@ -35,7 +36,7 @@ Steps always run in a **fixed order** (the order above), not the order they were
 
 | Category | What counts | Rule |
 |---|---|---|
-| Missingness | Empty cells | Only truly empty cells; `NA`, `None` etc. are kept as text |
+| Missingness | Empty cells and placeholders | Empty or space-only cells, and placeholder text (see below) |
 | Inconsistent data | Same value written differently | Case and spacing variants are grouped; in categories, the column's usual case style is applied and near-duplicates (typos, punctuation) are suggested as merges |
 | Invalid values | Numbers that break a rule | Rules suggested from the column name (age 0–120, month 1–12, percent 0–100 or 0–1, latitude/longitude, year, non-negative quantities like price or weight) or from the data (≤ 1% negative among 20+ values looks like sign errors); users can edit them or add their own. Recommended fix: clear the cells |
 | Outliers | Numbers far from the usual range | Tukey's fences (1.5 × IQR), needs 8+ numbers. Skips IDs, keys and codes (by name, leading zeros, or unique sequential numbers) and ordinal scales. Cut-offs: the usual range, percentiles (1st/99th suggested, 100+ values) or the user's own values |
@@ -68,6 +69,18 @@ Outliers are *detected* with the usual range (Tukey's fences, snapped to real va
 
 An empty box means no limit on that side. The UI previews how many values a choice affects (estimated from `cutoffs.quantiles`, the value at every half percentile) and warns above 10%. Percentile cut-offs always change some values, so they are a fix, never a way of detecting outliers.
 
+### Placeholders for missing values
+
+Text that stands for a missing value counts as missing (`backend/app/placeholders.py`). Matching ignores case and surrounding spaces.
+
+| Placeholder | Where |
+|---|---|
+| `NULL`, `(null)`, `<null>`, `N/A`, `#N/A`, `<NA>`, `n.a.`, cells of only spaces | Any column |
+| `NA`, `NaN`, `missing`, `unknown`, `?`, `not available`, `not applicable` | Number columns only, since `NA` is Namibia's country code and `Nan` is a name |
+| `None`, `nil`, `-` | Never: these often mean zero ("children: none"), so in a number column they're a data type mismatch for the user to decide |
+
+Every detector and fix except the missing-values detector sees placeholders as empty cells, so `N/A` among ages is a missing value rather than a type mismatch, and `n/a` vs `N/A` isn't an inconsistency. Filling or dropping missing values covers placeholders too. Placeholders still missing after the fixes are written back as uploaded, unless the user chose "Make placeholders empty" (`clear_placeholders`). That fix is recommended when no fill value fits, such as IDs or free text.
+
 ### Recommended fill for missing values
 
 Each missing-values issue marks one fix as `recommended` and explains why in its `detail` line. The UI tags that option and offers "Use recommended fixes"; nothing is applied until the user chooses. The choice follows the kind of data (`column_kind` in `values.py`):
@@ -78,7 +91,7 @@ Each missing-values issue marks one fix as `recommended` and explains why in its
 | Other numbers (skewed, heavy- or light-tailed, or too few to judge) | incomes | Median |
 | An ordinal scale: whole numbers spanning ≤ 10 steps that repeat | satisfaction 1–10, Likert 1–5, 0/1 flags | Mode |
 | Text categories that repeat (≤ 50% distinct) | city, plan tier | Mode |
-| IDs or free text (values rarely repeat) | `customer_id`, notes | Leave as is |
+| IDs or free text (values rarely repeat) | `customer_id`, notes | Leave as is (or make placeholders empty, if it has any) |
 
 Normality is judged by effect size (skewness, kurtosis), not a significance test, which on large files rejects normality over differences too small to matter. The thresholds are deliberately strict because recommending the median for normal data costs little, while recommending the mean for skewed data is the mistake worth avoiding.
 
@@ -92,6 +105,7 @@ backend/            FastAPI + pandas
     csv_io.py       encoding/delimiter detection, CSV in and out
     values.py       number parsing, outlier range, column kinds (shared by detectors and fixes)
     categories.py   text categories: case styles, grouping, merge suggestions
+    placeholders.py text that stands for a missing value ("N/A", "NULL")
     rules.py        validity rules: from column names, from the data
     detectors/      one module per issue type, registered in detectors/__init__.py
     transform.py    applies fix steps in fixed order

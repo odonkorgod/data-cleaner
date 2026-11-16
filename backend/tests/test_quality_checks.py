@@ -53,11 +53,11 @@ def test_standardize_lets_duplicates_be_caught(make_df):
 
 
 def test_type_mismatch_flags_text_in_a_mostly_numeric_column(make_df):
-    df = make_df("age\n30\n41\nunknown\n52\n27\n")
+    df = make_df("age\n30\n41\ntwenty\n52\n27\n")
     (issue,) = detect_type_mismatch(df)
     assert issue.category == "type_mismatch"
     assert issue.count == 1
-    assert '"unknown"' in issue.detail
+    assert '"twenty"' in issue.detail
 
 
 def test_type_mismatch_ignores_text_columns_with_a_few_numbers(make_df):
@@ -65,7 +65,7 @@ def test_type_mismatch_ignores_text_columns_with_a_few_numbers(make_df):
 
 
 def test_type_mismatch_clear_and_drop(make_df):
-    df = make_df("age,name\n30,a\nn/a,b\n52,c\n")
+    df = make_df("age,name\n30,a\ntwenty,b\n52,c\n")
     cleared = apply_steps(df, [FixTypeMismatch(column="age", action="clear")])
     assert cleared["age"].isna().tolist() == [False, True, False]
     dropped = apply_steps(df, [FixTypeMismatch(column="age", action="drop_rows")])
@@ -132,8 +132,8 @@ def test_outlier_bounds_must_be_ordered():
 
 
 def test_analyze_groups_every_issue_into_a_category(client):
-    # An outlier (250), stray text in a number column (n/a), and a spelling variant (rome).
-    rows = [f"{age},Rome" for age in AGE_VALUES] + ["n/a,rome"]
+    # An outlier (250), stray text in a number column (twenty), and a spelling variant (rome).
+    rows = [f"{age},Rome" for age in AGE_VALUES] + ["twenty,rome"]
     csv = ("visits,city\n" + "\n".join(rows) + "\n").encode()
     body = client.post("/analyze", files={"file": ("d.csv", csv, "text/csv")}).json()
     assert {i["category"] for i in body["issues"]} == {"outliers", "type_mismatch", "inconsistent"}

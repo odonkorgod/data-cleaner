@@ -106,6 +106,17 @@ class FillNulls(BaseModel):
     value: str | None = None
 
 
+class ClearPlaceholders(BaseModel):
+    """Make text that stands for a missing value ("N/A", "NULL") a truly empty cell.
+
+    Placeholders count as missing either way (see placeholders.py); without this step, any
+    that are still missing after the other fixes are written back as they were.
+    """
+
+    op: Literal["clear_placeholders"] = "clear_placeholders"
+    column: str
+
+
 class DropNullRows(BaseModel):
     op: Literal["drop_null_rows"] = "drop_null_rows"
     column: str
@@ -122,6 +133,7 @@ FixStep = Annotated[
     | FixInvalid
     | FixOutliers
     | FillNulls
+    | ClearPlaceholders
     | DropNullRows
     | DropDuplicates,
     Field(discriminator="op"),
@@ -139,6 +151,7 @@ STEP_ORDER: dict[str, int] = {
     "fix_invalid": 3,
     "fix_outliers": 4,
     "fill_nulls": 10,
+    "clear_placeholders": 15,
     "drop_null_rows": 20,
     "drop_duplicates": 30,
 }

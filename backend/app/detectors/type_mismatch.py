@@ -1,4 +1,7 @@
-"""Detect text in columns that are otherwise numeric (e.g. "n/a" or "unknown" among ages)."""
+"""Detect text in columns that are otherwise numeric (e.g. "twenty" or "none" among ages).
+
+Placeholders for missing values ("N/A", "unknown") are reported as missing values instead.
+"""
 
 import pandas as pd
 

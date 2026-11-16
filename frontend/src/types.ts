@@ -35,6 +35,8 @@ export type FixStep =
       strategy: "mean" | "median" | "mode" | "constant";
       value?: string | null;
     }
+  /** Make placeholders like "N/A" or "NULL" truly empty cells (otherwise they're kept). */
+  | { op: "clear_placeholders"; column: string }
   | { op: "drop_null_rows"; column: string }
   | { op: "drop_duplicates"; keep: "first" | "last" };
 

@@ -227,7 +227,8 @@ def format_number(value: float, present: pd.Series) -> str:
     A whole number is written without a decimal point ("40") unless the column already uses
     decimals or exponents ("40.0"), so integer columns stay integer columns.
     """
-    if value.is_integer() and not present.astype(str).str.contains(r"[.eE]").any():
+    numbers = present[to_numbers(present).notna()]  # stray text like "twenty" has no say
+    if value.is_integer() and not numbers.astype(str).str.contains(r"[.eE]").any():
         return str(int(value))
     return repr(value)
 
