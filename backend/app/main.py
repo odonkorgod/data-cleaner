@@ -18,6 +18,7 @@ from app.csv_io import CsvReadError, read_csv, write_csv
 from app.detectors import run_detectors
 from app.detectors.invalid import number_summaries
 from app.models import AnalyzeResponse, FixStep
+from app.placeholders import placeholder_frame
 from app.transform import TransformError, apply_steps
 
 logger = logging.getLogger("data_cleaner")
@@ -59,13 +60,14 @@ async def analyze(file: UploadFile = File(...)) -> AnalyzeResponse:
     except CsvReadError as e:
         raise HTTPException(status_code=400, detail=str(e)) from None
 
-    issues = run_detectors(df)
+    placeholders = placeholder_frame(df)  # "N/A", "NULL" and the like
+    issues = run_detectors(df, placeholders)
     logger.info("analyzed rows=%d cols=%d issues=%d", len(df), len(df.columns), len(issues))
     return AnalyzeResponse(
         rows=len(df),
         columns=[str(c) for c in df.columns],
         issues=issues,
-        numbers=number_summaries(df),
+        numbers=number_summaries(df.mask(placeholders)),
     )
 
 

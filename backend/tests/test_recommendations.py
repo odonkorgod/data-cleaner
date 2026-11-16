@@ -161,19 +161,19 @@ def test_analyze_returns_recommendations(client):
 
 
 def test_mean_and_median_are_offered_despite_stray_text(make_df):
-    df = make_df("age,k\n30,a\n40,b\nunknown,c\n50,d\n60,e\n,f\n")
+    df = make_df("age,k\n30,a\n40,b\ntwenty,c\n50,d\n60,e\n,f\n")
     (issue,) = [i for i in detect_missing(df) if i.columns == ["age"]]
     assert {"fill_mean", "fill_median"} <= {f.id for f in issue.fixes}
 
 
 def test_mean_fill_ignores_stray_text(make_df):
-    df = make_df("age,k\n30,a\n40,b\nunknown,c\n50,d\n60,e\n,f\n")
+    df = make_df("age,k\n30,a\n40,b\ntwenty,c\n50,d\n60,e\n,f\n")
     out = apply_steps(df, [FillNulls(column="age", strategy="mean")])
-    assert out["age"].tolist() == ["30", "40", "unknown", "50", "60", "45"]
+    assert out["age"].tolist() == ["30", "40", "twenty", "50", "60", "45"]
 
 
 def test_clearing_stray_text_then_filling_fills_those_cells_too(make_df):
-    df = make_df("age,k\n30,a\n40,b\nunknown,c\n50,d\n60,e\n,f\n")
+    df = make_df("age,k\n30,a\n40,b\ntwenty,c\n50,d\n60,e\n,f\n")
     steps = [
         FillNulls(column="age", strategy="median"),
         FixTypeMismatch(column="age", action="clear"),

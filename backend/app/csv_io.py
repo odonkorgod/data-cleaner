@@ -2,7 +2,8 @@
 
 Every cell is read as text, and only empty cells count as missing. That way a file the user
 did not ask to change comes back unchanged: leading zeros, "NA" country codes and integer
-formatting all survive. Numeric work converts on demand; see values.py.
+formatting all survive. Numeric work converts on demand; see values.py. Text that stands for a
+missing value ("N/A", "NULL") is recognized later, without changing the file; see placeholders.py.
 
 The delimiter, encoding and line endings of the upload are remembered in ``CsvFormat`` and
 reused when writing, so the cleaned file has the same shape as the original.
