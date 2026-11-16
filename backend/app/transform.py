@@ -5,6 +5,7 @@ Steps run in the fixed order defined by ``STEP_ORDER`` in models.py, not the ord
 
 import pandas as pd
 
+from app.categories import MergeError, standardize_mapping
 from app.models import (
     STEP_ORDER,
     DropDuplicates,
@@ -16,7 +17,6 @@ from app.models import (
     StandardizeValues,
 )
 from app.values import (
-    canonical_spellings,
     format_number,
     is_mostly_numeric,
     mode_value,
@@ -38,11 +38,17 @@ def _require_column(df: pd.DataFrame, column: str) -> None:
 
 def _standardize_values(df: pd.DataFrame, step: StandardizeValues) -> pd.DataFrame:
     _require_column(df, step.column)
-    mapping = canonical_spellings(df[step.column])
+    try:
+        mapping = standardize_mapping(df[step.column], step.case, step.merge)
+    except MergeError:
+        raise TransformError(
+            f"The merges chosen for '{step.column}' don't match its values. Analyze the file again."
+        ) from None
     if not mapping:
         return df
     out = df.copy()
-    out[step.column] = df[step.column].replace(mapping)
+    # One lookup per cell, so a rewritten value is never rewritten again.
+    out[step.column] = df[step.column].map(lambda v: mapping.get(v, v), na_action="ignore")
     return out
 
 

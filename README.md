@@ -19,7 +19,7 @@ The server is stateless, so the browser keeps the file between steps and re-send
 Each fix is a small JSON object discriminated by `op`, validated with Pydantic (`backend/app/models.py`) and mirrored in TypeScript (`frontend/src/types.ts`):
 
 ```json
-{"op": "standardize_values", "column": "city"}
+{"op": "standardize_values", "column": "city", "case": "title", "merge": {"new yrok": "new york"}}
 {"op": "fix_type_mismatch", "column": "age", "action": "clear"}
 {"op": "fix_outliers", "column": "age", "lower": 18, "upper": 90, "action": "cap"}
 {"op": "fill_nulls", "column": "age", "strategy": "median"}
@@ -34,12 +34,20 @@ Steps always run in a **fixed order** (the order above), not the order they were
 | Category | What counts | Rule |
 |---|---|---|
 | Missingness | Empty cells | Only truly empty cells; `NA`, `None` etc. are kept as text |
-| Inconsistent data | Same value, different case or spacing | `"New York"`, `"new york "` are grouped; the most common spelling wins |
+| Inconsistent data | Same value written differently | Case and spacing variants are grouped; in categories, the column's usual case style is applied and near-duplicates (typos, punctuation) are suggested as merges |
 | Outliers | Numbers far from the usual range | Tukey's fences (1.5 × IQR), needs 8+ numbers; capping uses the most extreme normal value |
 | Data type mismatch | Text in a number column | Column is at least 80% numbers; the rest is flagged |
 | Duplicate rows | Rows that repeat exactly | Count is the extra copies a fix would remove |
 
-Thresholds live in `backend/app/values.py`.
+Thresholds live in `backend/app/values.py` and `backend/app/categories.py`.
+
+### Reviewing inconsistent categories
+
+For a text column of repeating categories with at most 100 distinct values, the issue includes a `review`: each value (case and spacing variants already grouped) with its row count, how it looks in each case style, and a suggested merge where one fits. In the UI the user picks the case style and can merge any value into another; nothing is applied until they choose. Other text columns (names, free text, or more than 100 values) are only cleaned of case and spacing variants.
+
+- **Case style:** the column's most common style by cells (Title Case, UPPERCASE or lowercase). Guards keep correct values intact: deliberate mixed case (`eBay`, `McDonald`, `O'Neil`) is never changed; in Title Case, short all-caps values (`USA`, `NASA`) and acronyms inside values (`NYC Office`) are kept, small words stay lowercase (`Bank of America`), and only the first letter of a word is capitalized (`They're`, not `They'Re`).
+- **Suggested merges:** same letters with different punctuation (`N.Y.C.` → `NYC`), or typos: one edit in words of 5–8 letters, two from 9, only swapped neighbours at 4 letters, none below. The shorter word sets the allowance, so `Austria` is not a typo of `Australia`; values with different numbers (`Room 101`/`Room 102`) never match. Rare values merge into common ones, never in chains.
+- **Merges** are keyed by the value's group key (trimmed, single-spaced, lowercased), so they stay valid whichever case style is chosen.
 
 ### Recommended fill for missing values
 
@@ -63,7 +71,8 @@ backend/            FastAPI + pandas
     main.py         endpoints
     models.py       issue and fix-step schemas
     csv_io.py       encoding/delimiter detection, CSV in and out
-    values.py       number parsing, outlier range, spelling variants (shared by detectors and fixes)
+    values.py       number parsing, outlier range, column kinds (shared by detectors and fixes)
+    categories.py   text categories: case styles, grouping, merge suggestions
     detectors/      one module per issue type, registered in detectors/__init__.py
     transform.py    applies fix steps in fixed order
   tests/
@@ -106,7 +115,8 @@ cd frontend && npm run build   # typechecks, then builds
 ## Roadmap
 
 - [x] Detectors: whitespace and casing, mixed types (numbers), outliers
-- [ ] Detectors: constant columns, fuzzy category matching (typos), mixed date formats
+- [x] Fuzzy category matching (typos, punctuation) with user-reviewed merges
+- [ ] Detectors: constant columns, mixed date formats
 - [ ] Before/after preview of affected rows
 - [ ] Excel and JSON input
 - [ ] Deploy (API + static frontend)

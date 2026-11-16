@@ -1,6 +1,5 @@
 """Inconsistent spellings, type mismatches and outliers: detection, then the matching fixes."""
 
-import pandas as pd
 import pytest
 from pydantic import ValidationError
 
@@ -15,7 +14,7 @@ from app.models import (
     StandardizeValues,
 )
 from app.transform import apply_steps
-from app.values import canonical_spellings, outlier_range
+from app.values import outlier_range
 
 CITIES = "city,n\nNew York,1\nnew york,2\nNew York,3\n NEW YORK,4\nParis,5\nparis,6\nParis,7\n"
 # Ten ordinary ages and one typo.
@@ -24,12 +23,6 @@ AGES = "age\n" + "".join(f"{a}\n" for a in AGE_VALUES)
 
 
 # ----------------------------------------------------------------------- inconsistent data
-
-
-def test_canonical_spelling_is_the_most_common_one():
-    mapping = canonical_spellings(pd.Series(["b", "B", "B", "a", " A "]))
-    # "B" is most common; "a" and " A " tie, so the first seen wins.
-    assert mapping == {"b": "B", " A ": "a"}
 
 
 def test_inconsistent_counts_cells_that_would_change(make_df):
