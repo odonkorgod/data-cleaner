@@ -82,7 +82,7 @@ def test_outliers_detected_with_usual_range(make_df):
     (issue,) = detect_outliers(make_df(AGES))
     assert issue.category == "outliers"
     assert issue.count == 1
-    assert issue.detail == "Usual range 30 to 47, found 250"
+    assert issue.detail == "Found 250"
     cap = next(f for f in issue.fixes if f.id == "cap")
     assert cap.step == {
         "op": "fix_outliers",
@@ -158,9 +158,10 @@ def test_values_at_the_edge_of_the_range_are_not_outliers(make_df):
 
 def test_outlier_summary_rounds_long_decimals_for_display_only(make_df):
     (issue,) = detect_outliers(make_df(PRECISE))
-    assert issue.detail == "Usual range 1.24 to 2.34, found 9.88"
+    assert issue.detail == "Found 9.88"
     cap = next(f for f in issue.fixes if f.id == "cap")
-    assert cap.label == "Cap to the usual range (1.24 to 2.34)"
+    # Inputs are prefilled with the exact values, as written in the column.
+    assert (issue.cutoffs.lower_text, issue.cutoffs.upper_text) == ("1.236", "2.344")
     assert (cap.step["lower"], cap.step["upper"]) == (1.236, 2.344)
 
 

@@ -29,13 +29,27 @@ MAX_ORDINAL_SPAN = 10
 MIN_VALUES_FOR_ID = 20
 # ...if they are close to a sequence (1001, 1002, 1005, ...) or the column is named like one.
 MAX_ID_GAP = 2.0  # (max - min + 1) / count
-# Only consulted for columns of unique whole numbers. Matches "id", "customer_id", "Customer ID",
-# "id_number", "account_number", "invoice_no", "key" in any case, and "customerId"/"orderID" only
-# in camelCase, so ordinary words ending in "id" ("paid", "valid") don't match.
+# Names of columns whose numbers label things rather than measure them. Matches, in any case:
+#   IDs and keys:  "id", "customer_id", "Customer ID", "id_number", "key", "uuid"
+#   number suffix: "account_number", "invoice_no", "room_num", "zip code"
+#   key prefixes:  "fk_store", "FKbusinessAddress", "PK_order"
+#   code words, as the last word only: "zip", "postal_code", "customer_phone", "product_sku"
+#     ("phone_calls" is a count, so it does not match)
+# and camelCase forms ("customerId", "orderID", "storeNumber", "customerPhone"), while ordinary
+# words that merely end in these letters ("paid", "valid", "hotel") don't match.
+_CODE_WORDS = "zip|zipcode|postal|postcode|phone|telephone|tel|msisdn|sku|ean|upc|isbn|iban|ssn"
+_CAMEL_CODE_WORDS = (
+    "Zip|Zipcode|Postcode|Phone|Telephone|Tel|Msisdn|MSISDN|Sku|SKU|Ean|EAN|Upc|UPC"
+    "|Isbn|ISBN|Iban|IBAN|Ssn|SSN"
+)
 ID_NAME = re.compile(
     r"(?i:^id$|^id[_\s-]|[_\s-](id|number|no|num|code)$|^(key|uuid|guid|code)$)"
     r"|[a-z](Id|ID|Number|No|Num|Code)$"
+    r"|^(FK|PK)(?=[a-z]|[A-Z][a-z]|[_\s-])|^(fk|pk)(?=[A-Z_\s-])"
+    rf"|(?i:(^|[_\s-])({_CODE_WORDS})$)|[a-z]({_CAMEL_CODE_WORDS})$"
 )
+# A column where at least this share of values has a leading zero ("00123") holds codes.
+LEADING_ZERO_SHARE = 0.01
 
 # --- Distribution shape (see distribution_shape) ---
 # Fewer numbers than this and skewness/kurtosis are too noisy to judge the shape.
@@ -92,6 +106,23 @@ def _looks_like_ids(numbers: pd.Series, name: object) -> bool:
         return False
     sequential = (numbers.max() - numbers.min() + 1) / len(numbers) <= MAX_ID_GAP
     return sequential or bool(ID_NAME.search(str(name)))
+
+
+def is_identifier(series: pd.Series) -> bool:
+    """Numbers that label things rather than measure them: IDs, keys, codes, phone numbers.
+
+    Statistics like outliers are meaningless for these. Unlike the ID check behind missing-value
+    advice, uniqueness isn't required: a foreign key such as "store_id" repeats across rows.
+    """
+    if ID_NAME.search(str(series.name)):
+        return True
+    present = series.dropna().astype(str)
+    if present.empty:
+        return False
+    if present.str.match(r"0\d").mean() >= LEADING_ZERO_SHARE:
+        return True
+    numbers = present_numbers(series)
+    return bool((numbers % 1 == 0).all()) and _looks_like_ids(numbers, series.name)
 
 
 def present_numbers(series: pd.Series) -> pd.Series:

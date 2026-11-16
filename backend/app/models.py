@@ -48,17 +48,30 @@ class FixTypeMismatch(BaseModel):
 
 
 class FixOutliers(BaseModel):
-    """Deal with numbers outside ``[lower, upper]``, the usual range found by /analyze."""
+    """Cap (winsorize) or drop numbers outside a range.
+
+    The range is given either as values (``lower``/``upper``: the usual range found by
+    /analyze, or the user's own) or as percentiles (``lower_pct``/``upper_pct``, worked out
+    from the data when the step runs). A missing bound means no limit on that side.
+    """
 
     op: Literal["fix_outliers"] = "fix_outliers"
     column: str
-    lower: FiniteFloat
-    upper: FiniteFloat
     action: Literal["cap", "drop_rows"]
+    lower: FiniteFloat | None = None
+    upper: FiniteFloat | None = None
+    lower_pct: float | None = Field(default=None, ge=0, le=50)
+    upper_pct: float | None = Field(default=None, ge=50, le=100)
 
     @model_validator(mode="after")
-    def _ordered(self) -> "FixOutliers":
-        if self.lower > self.upper:
+    def _consistent(self) -> "FixOutliers":
+        values = self.lower is not None or self.upper is not None
+        percentiles = self.lower_pct is not None or self.upper_pct is not None
+        if values and percentiles:
+            raise ValueError("give the range as values or as percentiles, not both")
+        if not values and not percentiles:
+            raise ValueError("give at least one cut-off")
+        if self.lower is not None and self.upper is not None and self.lower > self.upper:
             raise ValueError("lower must not be greater than upper")
         return self
 
@@ -138,6 +151,24 @@ class ValueReview(BaseModel):
     values: list[ReviewValue]  # most common first
 
 
+class OutlierCutoffs(BaseModel):
+    """What the UI needs to offer cut-offs for an outlier column, and preview them."""
+
+    # The usual range (suggested cut-offs): exact, and as written in the column.
+    lower: float
+    upper: float
+    lower_text: str
+    upper_text: str
+    # How many numbers the column has, and the value at every half percentile (0, 0.5, ...,
+    # 100: 201 real data values), so the UI can estimate how many rows any cut-off affects.
+    values: int
+    quantiles: list[float]
+    # Percentile cut-offs need enough values to mean anything; their suggested defaults.
+    percentiles_ok: bool
+    lower_pct: float
+    upper_pct: float
+
+
 class Issue(BaseModel):
     id: str
     type: str
@@ -152,6 +183,8 @@ class Issue(BaseModel):
     fixes: list[FixOption]
     # Inconsistent text columns only: the values to review.
     review: ValueReview | None = None
+    # Outlier columns only: the suggested cut-offs and data to preview others.
+    cutoffs: OutlierCutoffs | None = None
 
 
 class AnalyzeResponse(BaseModel):

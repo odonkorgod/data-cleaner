@@ -11,6 +11,7 @@
   --field-bg: #ffffff;
   --field-text: #1a1a1a;
   --error: #c0392b;
+  --warn: #8a5a00;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -20,6 +21,7 @@
     --field-bg: #2c2c2e;
     --field-text: #f2f2f2;
     --error: #ff7b6b;
+    --warn: #e3b341;
   }
 }
 
@@ -473,4 +475,41 @@ button:disabled {
     content: " rows";
     opacity: 0.6;
   }
+}
+
+/* --- Outlier cut-offs --- */
+
+.cutoff-inputs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+}
+
+.cutoff-inputs label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.85rem;
+}
+
+.cutoff-inputs input {
+  width: 7.5rem;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+.note {
+  margin: 0.4rem 0 0;
+  font-size: 0.85rem;
+  opacity: 0.75;
+}
+
+.error.note,
+.warn.note {
+  opacity: 1;
+}
+
+.warn {
+  color: var(--warn);
+  font-weight: 600;
 }
