@@ -22,6 +22,7 @@ Each fix is a small JSON object discriminated by `op`, validated with Pydantic (
 {"op": "standardize_values", "column": "city", "case": "title", "merge": {"new yrok": "new york"}}
 {"op": "fix_type_mismatch", "column": "age", "action": "clear"}
 {"op": "fix_outliers", "column": "age", "lower": 18, "upper": 90, "action": "cap"}
+{"op": "fix_outliers", "column": "income", "upper_pct": 99, "action": "cap"}
 {"op": "fill_nulls", "column": "age", "strategy": "median"}
 {"op": "drop_null_rows", "column": "name"}
 {"op": "drop_duplicates", "keep": "first"}
@@ -35,7 +36,7 @@ Steps always run in a **fixed order** (the order above), not the order they were
 |---|---|---|
 | Missingness | Empty cells | Only truly empty cells; `NA`, `None` etc. are kept as text |
 | Inconsistent data | Same value written differently | Case and spacing variants are grouped; in categories, the column's usual case style is applied and near-duplicates (typos, punctuation) are suggested as merges |
-| Outliers | Numbers far from the usual range | Tukey's fences (1.5 × IQR), needs 8+ numbers; capping uses the most extreme normal value |
+| Outliers | Numbers far from the usual range | Tukey's fences (1.5 × IQR), needs 8+ numbers. Skips IDs, keys and codes (by name, leading zeros, or unique sequential numbers) and ordinal scales. Cut-offs: the usual range, percentiles (1st/99th suggested, 100+ values) or the user's own values |
 | Data type mismatch | Text in a number column | Column is at least 80% numbers; the rest is flagged |
 | Duplicate rows | Rows that repeat exactly | Count is the extra copies a fix would remove |
 
@@ -48,6 +49,16 @@ For a text column of repeating categories with at most 100 distinct values, the 
 - **Case style:** the column's most common style by cells (Title Case, UPPERCASE or lowercase). Guards keep correct values intact: deliberate mixed case (`eBay`, `McDonald`, `O'Neil`) is never changed; in Title Case, short all-caps values (`USA`, `NASA`) and acronyms inside values (`NYC Office`) are kept, small words stay lowercase (`Bank of America`), and only the first letter of a word is capitalized (`They're`, not `They'Re`).
 - **Suggested merges:** same letters with different punctuation (`N.Y.C.` → `NYC`), or typos: one edit in words of 5–8 letters, two from 9, only swapped neighbours at 4 letters, none below. The shorter word sets the allowance, so `Austria` is not a typo of `Australia`; values with different numbers (`Room 101`/`Room 102`) never match. Rare values merge into common ones, never in chains.
 - **Merges** are keyed by the value's group key (trimmed, single-spaced, lowercased), so they stay valid whichever case style is chosen.
+
+### Outlier cut-offs
+
+Outliers are *detected* with the usual range (Tukey's fences, snapped to real values). To *fix* them the user picks cut-offs, then caps (winsorizes) or drops rows outside them:
+
+- **Usual range** (default): the detected range.
+- **Percentiles**: 1st and 99th suggested; offered from 100 values. The server works them out from the column as uploaded, before any other fix runs, and snaps them to real values so whole numbers stay whole.
+- **My own values**: for known valid ranges. Inputs start with the usual range.
+
+An empty box means no limit on that side. The UI previews how many values a choice affects (estimated from `cutoffs.quantiles`, the value at every half percentile) and warns above 10%. Percentile cut-offs always change some values, so they are a fix, never a way of detecting outliers.
 
 ### Recommended fill for missing values
 

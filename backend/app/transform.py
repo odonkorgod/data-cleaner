@@ -68,17 +68,50 @@ def _as_text(bound: float, series: pd.Series, numbers: pd.Series) -> str:
     return matches.iloc[0] if not matches.empty else format_number(bound, series.dropna())
 
 
+def _percentile(numbers: pd.Series, pct: float | None) -> float | None:
+    """The real data value at a percentile, so capped cells hold values the column already has."""
+    if pct is None or numbers.empty:
+        return None
+    return float(numbers.quantile(pct / 100, interpolation="nearest"))
+
+
+def _resolve_percentiles(df: pd.DataFrame, step: FixOutliers) -> FixOutliers:
+    """Turn percentile cut-offs into values, from the column as uploaded.
+
+    Done before any step runs, so "the 99th percentile" means the same thing as in the preview,
+    whatever rows other fixes drop first.
+    """
+    if step.lower_pct is None and step.upper_pct is None:
+        return step
+    _require_column(df, step.column)
+    present = to_numbers(df[step.column]).dropna()
+    return step.model_copy(
+        update={
+            "lower": _percentile(present, step.lower_pct),
+            "upper": _percentile(present, step.upper_pct),
+            "lower_pct": None,
+            "upper_pct": None,
+        }
+    )
+
+
 def _fix_outliers(df: pd.DataFrame, step: FixOutliers) -> pd.DataFrame:
     _require_column(df, step.column)
     series = df[step.column]
     numbers = to_numbers(series)  # NaN for empty and non-numeric cells, which are left alone
-    low, high = numbers < step.lower, numbers > step.upper
+    lower, upper = step.lower, step.upper  # percentiles were resolved in apply_steps
+
+    # A missing bound means no limit on that side.
+    low = numbers < lower if lower is not None else pd.Series(False, index=numbers.index)
+    high = numbers > upper if upper is not None else pd.Series(False, index=numbers.index)
 
     if step.action == "drop_rows":
         return df[~(low | high)]
     out = df.copy()
-    out.loc[low, step.column] = _as_text(step.lower, series, numbers)
-    out.loc[high, step.column] = _as_text(step.upper, series, numbers)
+    if lower is not None:
+        out.loc[low, step.column] = _as_text(lower, series, numbers)
+    if upper is not None:
+        out.loc[high, step.column] = _as_text(upper, series, numbers)
     return out
 
 
@@ -127,6 +160,7 @@ def _drop_duplicates(df: pd.DataFrame, step: DropDuplicates) -> pd.DataFrame:
 
 
 def apply_steps(df: pd.DataFrame, steps: list[FixStep]) -> pd.DataFrame:
+    steps = [_resolve_percentiles(df, s) if isinstance(s, FixOutliers) else s for s in steps]
     # sorted() is stable, so steps with the same rank keep the order they were sent in.
     ordered = sorted(steps, key=lambda s: STEP_ORDER[s.op])
 

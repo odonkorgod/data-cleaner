@@ -1,12 +1,23 @@
 import { Fragment, useMemo, useState } from "react";
 import { analyze, transform } from "./api";
+import {
+  cutoffProblem,
+  initialCutoffs,
+  ordinal,
+  outlierStep,
+  resolveCutoffs,
+  shareOutside,
+} from "./cutoffs";
 import type {
   AnalyzeResponse,
   CaseStyle,
   Category,
   Choice,
+  CutoffChoice,
+  CutoffMethod,
   FixStep,
   Issue,
+  OutlierCutoffs,
   ReviewChoice,
   ValueReview,
 } from "./types";
@@ -60,6 +71,8 @@ function buildSteps(issues: Issue[], choices: Record<string, Choice>): FixStep[]
       steps.push({ ...fix.step, value: choice.value });
     } else if (fix.step.op === "standardize_values" && choice.review) {
       steps.push({ ...fix.step, case: choice.review.case, merge: choice.review.merge });
+    } else if (fix.step.op === "fix_outliers" && choice.cutoffs) {
+      steps.push(outlierStep(fix.step, choice.cutoffs));
     } else {
       steps.push(fix.step);
     }
@@ -81,11 +94,146 @@ function initialReview(review: ValueReview): ReviewChoice {
   return { case: review.case, merge };
 }
 
-/** A fresh choice for an issue: "leave as is", with any review at its starting point. */
+/** A fresh choice for an issue: "leave as is", with any review or cut-offs at their start. */
 function initialChoice(issue: Issue): Choice {
-  return issue.review
-    ? { fixId: "leave", value: "", review: initialReview(issue.review) }
-    : { fixId: "leave", value: "" };
+  return {
+    fixId: "leave",
+    value: "",
+    ...(issue.review ? { review: initialReview(issue.review) } : {}),
+    ...(issue.cutoffs ? { cutoffs: initialCutoffs(issue.cutoffs) } : {}),
+  };
+}
+
+function formatNumber(n: number): string {
+  return n.toLocaleString(undefined, { maximumFractionDigits: 2 });
+}
+
+/** "23 to 64", "from 23", "up to 64". */
+function rangeText(lower: number | null, upper: number | null): string {
+  if (lower !== null && upper !== null) return `${formatNumber(lower)} to ${formatNumber(upper)}`;
+  return lower !== null ? `from ${formatNumber(lower)}` : `up to ${formatNumber(upper ?? 0)}`;
+}
+
+const METHOD_LABELS: Record<CutoffMethod, string> = {
+  usual: "Usual range",
+  percentile: "Percentiles",
+  own: "My own values",
+};
+
+// Above this share of values, changing them deserves a second look.
+const WARN_SHARE = 0.1;
+
+function CutoffPanel({
+  issue,
+  info,
+  choice,
+  onChange,
+}: {
+  issue: Issue;
+  info: OutlierCutoffs;
+  choice: Choice;
+  onChange: (next: CutoffChoice) => void;
+}) {
+  const cut = choice.cutoffs!;
+  const problem = cutoffProblem(cut);
+  const range = problem ? null : resolveCutoffs(info, cut);
+  const pct = cut.method === "percentile";
+
+  // The usual range's count is exact; anything else is estimated from the quantiles.
+  const exact = cut.method === "usual";
+  const share = range
+    ? exact
+      ? issue.count / info.values
+      : shareOutside(info, range.lower, range.upper)
+    : 0;
+  const amount = exact
+    ? `${issue.count.toLocaleString()} value${issue.count === 1 ? "" : "s"}`
+    : share === 0
+      ? "no values"
+      : share < 0.01
+        ? "<1% of values"
+        : `≈ ${Math.round(share * 100)}% of values`;
+  const verb = choice.fixId === "cap" ? "Caps" : choice.fixId === "drop_rows" ? "Drops" : "Affects";
+  const preview = `${verb} ${amount}`;
+
+  // "usual range, 23 to 64" / "1st to 99th percentile (≈ 21 to 68)" / "up to the 99th
+  // percentile (≈ 68)" / "my own values, from 0".
+  let summary = "Cut-offs";
+  if (range && pct) {
+    const lowerPct = cut.lowerPct.trim() ? ordinal(Number(cut.lowerPct)) : null;
+    const upperPct = cut.upperPct.trim() ? ordinal(Number(cut.upperPct)) : null;
+    const which =
+      lowerPct && upperPct
+        ? `${lowerPct}–${upperPct} percentile`
+        : lowerPct
+          ? `from the ${lowerPct} percentile`
+          : `up to the ${upperPct} percentile`;
+    const values =
+      range.lower !== null && range.upper !== null
+        ? rangeText(range.lower, range.upper)
+        : formatNumber((range.lower ?? range.upper)!);
+    summary = `Cut-offs: ${which} (≈ ${values})`;
+  } else if (range) {
+    const usual = cut.method === "usual" ? " (usual range)" : "";
+    summary = `Cut-offs: ${rangeText(range.lower, range.upper)}${usual}`;
+  }
+
+  const set = (patch: Partial<CutoffChoice>) => onChange({ ...cut, ...patch });
+  const labelFor = (side: string) => `${side}${pct ? " %" : ""}`;
+
+  return (
+    <details className="review">
+      <summary>{summary}</summary>
+      <label className="case-picker">
+        <select
+          aria-label="How to set the cut-offs"
+          value={cut.method}
+          onChange={(e) => set({ method: e.target.value as CutoffMethod })}
+        >
+          <option value="usual">{METHOD_LABELS.usual}</option>
+          <option value="percentile" disabled={!info.percentiles_ok}>
+            {METHOD_LABELS.percentile}
+            {info.percentiles_ok ? "" : " (needs 100+ values)"}
+          </option>
+          <option value="own">{METHOD_LABELS.own}</option>
+        </select>
+      </label>
+      {cut.method !== "usual" && (
+        <>
+          <div className="cutoff-inputs">
+            <label>
+              {labelFor("Lower")}
+              <input
+                type="text"
+                inputMode="decimal"
+                placeholder="No limit"
+                value={pct ? cut.lowerPct : cut.lower}
+                onChange={(e) => set(pct ? { lowerPct: e.target.value } : { lower: e.target.value })}
+              />
+            </label>
+            <label>
+              {labelFor("Upper")}
+              <input
+                type="text"
+                inputMode="decimal"
+                placeholder="No limit"
+                value={pct ? cut.upperPct : cut.upper}
+                onChange={(e) => set(pct ? { upperPct: e.target.value } : { upper: e.target.value })}
+              />
+            </label>
+          </div>
+        </>
+      )}
+      {problem ? (
+        <p className="error note">{problem}</p>
+      ) : (
+        <p className="note">{preview}</p>
+      )}
+      {!problem && share > WARN_SHARE && (
+        <p className="warn note">That changes a lot of values. Check the cut-offs.</p>
+      )}
+    </details>
+  );
 }
 
 function ReviewPanel({
@@ -292,6 +440,12 @@ export default function App() {
     });
   }
 
+  /** Editing cut-offs means the user wants them applied, so pick "cap" if nothing is chosen. */
+  function setCutoffs(issue: Issue, cutoffs: CutoffChoice) {
+    const current = choices[issue.id]?.fixId;
+    setChoice(issue.id, { cutoffs, ...(current === "leave" ? { fixId: "cap" } : {}) });
+  }
+
   /** Editing a review means the user wants it applied, so select the standardize fix too. */
   function setReview(issue: Issue, review: ReviewChoice) {
     const standardize = issue.fixes.find((f) => f.step?.op === "standardize_values");
@@ -314,6 +468,12 @@ export default function App() {
     const choice = choices[issue.id];
     const fix = issue.fixes.find((f) => f.id === choice?.fixId);
     return fix?.needs_value && choice.value.trim() === "";
+  });
+
+  // Cut-offs that can't be used block the download while their fix is selected.
+  const badCutoffs = report?.issues.some((issue) => {
+    const choice = choices[issue.id];
+    return choice?.cutoffs && choice.fixId !== "leave" && cutoffProblem(choice.cutoffs) !== null;
   });
 
   return (
@@ -454,6 +614,18 @@ export default function App() {
                                   </div>
                                 </td>
                               </tr>
+                              {issue.cutoffs && choice?.cutoffs && (
+                                <tr className="review-row">
+                                  <td colSpan={3}>
+                                    <CutoffPanel
+                                      issue={issue}
+                                      info={issue.cutoffs}
+                                      choice={choice}
+                                      onChange={(next) => setCutoffs(issue, next)}
+                                    />
+                                  </td>
+                                </tr>
+                              )}
                               {issue.review && choice?.review && (
                                 <tr className="review-row">
                                   <td colSpan={3}>
@@ -482,7 +654,7 @@ export default function App() {
               );
             })}
 
-          <button onClick={onDownload} disabled={busy || missingValue}>
+          <button onClick={onDownload} disabled={busy || missingValue || badCutoffs}>
             Download cleaned CSV{steps.length > 0 ? ` (${steps.length} fix${steps.length === 1 ? "" : "es"})` : ""}
           </button>
         </>

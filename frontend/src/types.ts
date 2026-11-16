@@ -14,9 +14,12 @@ export type FixStep =
   | {
       op: "fix_outliers";
       column: string;
-      lower: number;
-      upper: number;
       action: "cap" | "drop_rows";
+      /** Cut-offs as values, or as percentiles. A missing bound means no limit that side. */
+      lower?: number | null;
+      upper?: number | null;
+      lower_pct?: number | null;
+      upper_pct?: number | null;
     }
   | {
       op: "fill_nulls";
@@ -59,6 +62,22 @@ export interface Issue {
   fixes: FixOption[];
   /** Inconsistent text columns only: the values to review. */
   review: ValueReview | null;
+  /** Outlier columns only: suggested cut-offs and data to preview others. */
+  cutoffs: OutlierCutoffs | null;
+}
+
+export interface OutlierCutoffs {
+  /** The usual range: exact, and as written in the column (to prefill inputs). */
+  lower: number;
+  upper: number;
+  lower_text: string;
+  upper_text: string;
+  /** Count of numbers, and the value at every half percentile 0..100 (201 entries). */
+  values: number;
+  quantiles: number[];
+  percentiles_ok: boolean;
+  lower_pct: number;
+  upper_pct: number;
 }
 
 /** One distinct value of a text column (spelling variants already grouped). */
@@ -91,6 +110,18 @@ export interface Choice {
   value: string;
   /** For issues with a review: the chosen case style and merges. */
   review?: ReviewChoice;
+  /** For outlier issues: how the cut-offs are set. Inputs are kept as typed. */
+  cutoffs?: CutoffChoice;
+}
+
+export type CutoffMethod = "usual" | "percentile" | "own";
+
+export interface CutoffChoice {
+  method: CutoffMethod;
+  lowerPct: string;
+  upperPct: string;
+  lower: string;
+  upper: string;
 }
 
 export interface ReviewChoice {
