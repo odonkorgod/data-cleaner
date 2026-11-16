@@ -23,6 +23,7 @@ IQR_FACTOR = 1.5
 # Categories repeat: at most this share of a column's values may be distinct.
 MAX_DISTINCT_SHARE = 0.5
 # Whole numbers spanning at most this many steps (1–10, 0–10, 1–5) form an ordinal scale.
+# Values are compared as numbers, so "7", "7.0" and "7.00" are all the whole number 7.
 MAX_ORDINAL_SPAN = 10
 # Whole numbers that are all different, over at least this many rows, may be IDs...
 MIN_VALUES_FOR_ID = 20
@@ -117,7 +118,7 @@ def column_kind(series: pd.Series) -> ColumnKind:
         return "empty"
 
     if is_mostly_numeric(series):
-        numbers = present_numbers(series)
+        numbers = present_numbers(series)  # "3.0000" -> 3.0, so zero decimals still count
         distinct = numbers.nunique()
         whole = bool((numbers % 1 == 0).all())
         repeats = distinct <= MAX_DISTINCT_SHARE * len(numbers)
@@ -129,6 +130,26 @@ def column_kind(series: pd.Series) -> ColumnKind:
 
     repeats = present.nunique() <= MAX_DISTINCT_SHARE * len(present)
     return "nominal" if repeats else "unique"
+
+
+def mode_value(series: pd.Series) -> str | None:
+    """The column's most common value, written the way the column writes it.
+
+    In number columns values are compared as numbers, so "7", "7.0" and "7.00" count as one
+    value; the result is that number's most common spelling. Ties between values go to the
+    smallest (as pandas' mode does), ties between spellings to the one seen first.
+    """
+    present = series.dropna()
+    if present.empty:
+        return None
+    if not is_mostly_numeric(series):
+        return str(present.mode().iloc[0])
+
+    numbers = to_numbers(present)  # stray text becomes NaN and is ignored
+    modal = numbers.mode(dropna=True).iloc[0]
+    spellings = present[numbers == modal]
+    counts = spellings.value_counts()
+    return max(spellings.drop_duplicates(), key=lambda s: counts[s])
 
 
 def is_categorical(series: pd.Series) -> bool:
@@ -184,7 +205,9 @@ def outlier_range(series: pd.Series) -> tuple[float, float] | None:
     if iqr == 0:
         return None
     inside = numbers[numbers.between(q1 - IQR_FACTOR * iqr, q3 + IQR_FACTOR * iqr)]
-    return round(float(inside.min()), 2), round(float(inside.max()), 2)
+    # Exact, not rounded: the bounds must equal real values, or the edge values themselves would
+    # be flagged and capped. Rounding for display happens in the outliers detector.
+    return float(inside.min()), float(inside.max())
 
 
 def normalize_text(value: str) -> str:

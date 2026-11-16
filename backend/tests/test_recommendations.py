@@ -179,3 +179,55 @@ def test_clearing_stray_text_then_filling_fills_those_cells_too(make_df):
         FixTypeMismatch(column="age", action="clear"),
     ]
     assert apply_steps(df, steps)["age"].tolist() == ["30", "40", "45", "50", "60", "45"]
+
+
+# ------------------------------------------- whole numbers written with zero decimals
+
+ZERO_DECIMALS = column(
+    [f"{s}.0" for s in rng.integers(1, 11, 60)]  # "7.0"
+    + [f"{s}.00" for s in rng.integers(1, 11, 20)]  # "7.00"
+    + [f"{s}.0000" for s in rng.integers(1, 11, 20)],  # "7.0000"
+    "satisfaction",
+)
+
+
+def test_zero_decimal_scores_are_an_ordinal_scale():
+    assert column_kind(ZERO_DECIMALS) == "ordinal"
+    assert is_categorical(ZERO_DECIMALS)
+
+
+def test_mixed_integer_and_zero_decimal_scores_are_one_scale():
+    mixed = column(
+        [str(s) for s in rng.integers(1, 6, 30)] + [f"{s}.0" for s in rng.integers(1, 6, 30)]
+    )
+    assert column_kind(mixed) == "ordinal"
+    assert "1–5 scale" in recommend_fill(mixed).reason
+
+
+def test_zero_decimal_scores_get_the_mode_and_a_clean_scale_label():
+    advice = recommend_fill(ZERO_DECIMALS)
+    assert advice.fix_id == "fill_mode"
+    assert "1–10 scale" in advice.reason
+
+
+def test_real_decimals_are_not_an_ordinal_scale():
+    assert column_kind(column([f"{s}.5" for s in rng.integers(1, 6, 40)])) == "continuous"
+
+
+def test_mode_counts_differently_written_numbers_as_one_value(make_df):
+    # 7 appears three times (written 3 ways); "8" appears twice as identical text.
+    df = make_df("score,k\n7,a\n7.0,b\n8,c\n8,d\n7.00,e\n3,f\n,g\n")
+    out = apply_steps(df, [FillNulls(column="score", strategy="mode")])
+    assert out["score"].iloc[-1] == "7"
+
+
+def test_mode_uses_the_numbers_most_common_spelling(make_df):
+    df = make_df("score,k\n7.0,a\n7.0,b\n7,c\n2,d\n,e\n")
+    out = apply_steps(df, [FillNulls(column="score", strategy="mode")])
+    assert out["score"].iloc[-1] == "7.0"
+
+
+def test_mode_of_text_columns_is_unchanged(make_df):
+    df = make_df("city,k\nAccra,a\nTamale,b\nAccra,c\n,d\n")
+    out = apply_steps(df, [FillNulls(column="city", strategy="mode")])
+    assert out["city"].iloc[-1] == "Accra"
