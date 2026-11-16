@@ -12,6 +12,14 @@ export type FixStep =
     }
   | { op: "fix_type_mismatch"; column: string; action: "clear" | "drop_rows" }
   | {
+      op: "fix_invalid";
+      column: string;
+      action: "clear" | "drop_rows";
+      /** The allowed range. A missing bound means no limit on that side. */
+      min?: number | null;
+      max?: number | null;
+    }
+  | {
       op: "fix_outliers";
       column: string;
       action: "cap" | "drop_rows";
@@ -33,6 +41,7 @@ export type FixStep =
 export type Category =
   | "missingness"
   | "inconsistent"
+  | "invalid"
   | "outliers"
   | "type_mismatch"
   | "duplicates";
@@ -64,6 +73,23 @@ export interface Issue {
   review: ValueReview | null;
   /** Outlier columns only: suggested cut-offs and data to preview others. */
   cutoffs: OutlierCutoffs | null;
+  /** Invalid-values issues only: the rule the values break. */
+  rule: ValidityRule | null;
+}
+
+export interface ValidityRule {
+  min: number | null;
+  max: number | null;
+  reason: string;
+  /** Suggested from the column name or the data; "user" for rules added in the UI. */
+  source: "name" | "data" | "user";
+}
+
+/** A number column's distribution, to preview rules the user adds. */
+export interface NumberSummary {
+  values: number;
+  /** The value at every half percentile, 0 to 100 (201 entries). */
+  quantiles: number[];
 }
 
 export interface OutlierCutoffs {
@@ -102,6 +128,8 @@ export interface AnalyzeResponse {
   rows: number;
   columns: string[];
   issues: Issue[];
+  /** Number columns a rule can be added to (not IDs or codes), by name. */
+  numbers: Record<string, NumberSummary>;
 }
 
 /** What the user has picked for one issue. */
@@ -112,6 +140,13 @@ export interface Choice {
   review?: ReviewChoice;
   /** For outlier issues: how the cut-offs are set. Inputs are kept as typed. */
   cutoffs?: CutoffChoice;
+  /** For invalid-values issues: the allowed range, as typed. */
+  rule?: RuleChoice;
+}
+
+export interface RuleChoice {
+  min: string;
+  max: string;
 }
 
 export type CutoffMethod = "usual" | "percentile" | "own";

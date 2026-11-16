@@ -5,6 +5,8 @@ import {
   initialCutoffs,
   ordinal,
   outlierStep,
+  parseBound,
+  rangeProblem,
   resolveCutoffs,
   shareOutside,
 } from "./cutoffs";
@@ -17,8 +19,11 @@ import type {
   CutoffMethod,
   FixStep,
   Issue,
+  NumberSummary,
   OutlierCutoffs,
   ReviewChoice,
+  RuleChoice,
+  ValidityRule,
   ValueReview,
 } from "./types";
 
@@ -29,6 +34,12 @@ const CATEGORIES: { id: Category; label: string; hint: string; unit: string }[] 
     id: "inconsistent",
     label: "Inconsistent data",
     hint: "The same value written differently: case, spacing, punctuation or typos.",
+    unit: "cell",
+  },
+  {
+    id: "invalid",
+    label: "Invalid values",
+    hint: "Numbers that break a rule, like a negative age.",
     unit: "cell",
   },
   {
@@ -73,6 +84,9 @@ function buildSteps(issues: Issue[], choices: Record<string, Choice>): FixStep[]
       steps.push({ ...fix.step, case: choice.review.case, merge: choice.review.merge });
     } else if (fix.step.op === "fix_outliers" && choice.cutoffs) {
       steps.push(outlierStep(fix.step, choice.cutoffs));
+    } else if (fix.step.op === "fix_invalid" && choice.rule) {
+      const { min, max } = choice.rule;
+      steps.push({ ...fix.step, min: parseBound(min), max: parseBound(max) });
     } else {
       steps.push(fix.step);
     }
@@ -101,7 +115,124 @@ function initialChoice(issue: Issue): Choice {
     value: "",
     ...(issue.review ? { review: initialReview(issue.review) } : {}),
     ...(issue.cutoffs ? { cutoffs: initialCutoffs(issue.cutoffs) } : {}),
+    ...(issue.rule ? { rule: initialRule(issue.rule) } : {}),
   };
+}
+
+function initialRule(rule: ValidityRule): RuleChoice {
+  return {
+    min: rule.min === null ? "" : String(rule.min),
+    max: rule.max === null ? "" : String(rule.max),
+  };
+}
+
+const USER_RULE = "rule:";
+
+function option(id: string, label: string, step: FixStep | null) {
+  return { id, label, step, needs_value: false, recommended: false };
+}
+
+/** A rule the user added, shaped like a detected issue so the rest of the page treats it alike. */
+function userRuleIssue(column: string): Issue {
+  const step = { op: "fix_invalid" as const, column, min: null, max: null };
+  return {
+    id: `${USER_RULE}${column}`,
+    type: "invalid_values",
+    category: "invalid",
+    title: `Your rule for '${column}'`,
+    columns: [column],
+    count: 0,
+    detail: null,
+    samples: [],
+    review: null,
+    cutoffs: null,
+    rule: { min: null, max: null, reason: "", source: "user" },
+    fixes: [
+      option("clear", "Clear (leave empty)", { ...step, action: "clear" }),
+      option("drop_rows", "Drop rows that have them", { ...step, action: "drop_rows" }),
+      option("leave", "Leave as is", null),
+    ],
+  };
+}
+
+function RulePanel({
+  issue,
+  choice,
+  summary,
+  onChange,
+  onRemove,
+}: {
+  issue: Issue;
+  choice: Choice;
+  summary: NumberSummary | undefined;
+  onChange: (next: RuleChoice) => void;
+  onRemove?: () => void;
+}) {
+  const rule = issue.rule!;
+  const typed = choice.rule!;
+  const problem = rangeProblem(typed.min, typed.max, "Limit");
+  const min = parseBound(typed.min);
+  const max = parseBound(typed.max);
+
+  // The suggested rule's count is exact; an edited or added rule is estimated.
+  const exact = rule.source !== "user" && min === rule.min && max === rule.max;
+  const share = problem || exact || !summary ? null : shareOutside(summary, min, max);
+  const amount = exact
+    ? `${issue.count.toLocaleString()} value${issue.count === 1 ? "" : "s"}`
+    : share === null
+      ? null
+      : share === 0
+        ? "no values"
+        : share < 0.01
+          ? "<1% of values"
+          : `≈ ${Math.round(share * 100)}% of values`;
+  const verb =
+    choice.fixId === "clear" ? "Clears" : choice.fixId === "drop_rows" ? "Drops" : "Affects";
+
+  const set = (patch: Partial<RuleChoice>) => onChange({ ...typed, ...patch });
+
+  return (
+    <details className="review" open={rule.source === "user"}>
+      <summary>
+        Rule{problem ? "" : `: ${rangeText(min, max)}`}
+        {rule.source === "user" ? " (yours)" : ""}
+      </summary>
+      <div className="cutoff-inputs">
+        <label>
+          Min
+          <input
+            type="text"
+            inputMode="decimal"
+            placeholder="No limit"
+            value={typed.min}
+            onChange={(e) => set({ min: e.target.value })}
+          />
+        </label>
+        <label>
+          Max
+          <input
+            type="text"
+            inputMode="decimal"
+            placeholder="No limit"
+            value={typed.max}
+            onChange={(e) => set({ max: e.target.value })}
+          />
+        </label>
+      </div>
+      {/* The reason explains the suggested rule, so it goes once the rule is edited. */}
+      {rule.reason && exact && <p className="note">{rule.reason}</p>}
+      {problem ? (
+        <p className="error note">{problem}</p>
+      ) : (
+        amount && <p className="note">{`${verb} ${amount}`}</p>
+      )}
+      {onRemove && (
+        <button className="link-button remove" onClick={onRemove}>
+          Remove rule
+        </button>
+      )}
+    </details>
+  );
 }
 
 function formatNumber(n: number): string {
@@ -375,27 +506,43 @@ export default function App() {
   const [choices, setChoices] = useState<Record<string, Choice>>({});
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Columns the user added an invalid-values rule for.
+  const [userRules, setUserRules] = useState<string[]>([]);
 
-  const steps = useMemo(
-    () => (report ? buildSteps(report.issues, choices) : []),
-    [report, choices],
+  // Detected issues plus the user's own rules, which behave just like them.
+  const issues = useMemo(
+    () => (report ? [...report.issues, ...userRules.map(userRuleIssue)] : []),
+    [report, userRules],
   );
+
+  const steps = useMemo(() => buildSteps(issues, choices), [issues, choices]);
 
   const groups = useMemo(
     () =>
       CATEGORIES.map((category) => {
-        const issues = report?.issues.filter((i) => i.category === category.id) ?? [];
-        const count = issues.reduce((sum, i) => sum + i.count, 0);
-        return { ...category, issues, count };
+        const inGroup = issues.filter((i) => i.category === category.id);
+        const count = inGroup.reduce((sum, i) => sum + i.count, 0);
+        return { ...category, issues: inGroup, count };
       }),
-    [report],
+    [issues],
   );
+
+  // Number columns that could take a rule but don't have one yet.
+  const ruleColumns = report
+    ? Object.keys(report.numbers).filter(
+        (c) => !issues.some((i) => i.rule && i.columns[0] === c),
+      )
+    : [];
+  // The invalid-values card stays available for adding rules even when nothing was found.
+  const showCard = (g: (typeof groups)[number]) =>
+    g.issues.length > 0 || (g.id === "invalid" && ruleColumns.length > 0);
 
   async function onFile(f: File | undefined) {
     if (!f) return;
     setFile(f);
     setReport(null);
     setChoices({});
+    setUserRules([]);
     setError(null);
     setBusy(true);
     try {
@@ -440,6 +587,26 @@ export default function App() {
     });
   }
 
+  /** Editing a rule means the user wants it applied, so pick "clear" if nothing is chosen. */
+  function setRule(issue: Issue, rule: RuleChoice) {
+    const current = choices[issue.id]?.fixId;
+    setChoice(issue.id, { rule, ...(current === "leave" ? { fixId: "clear" } : {}) });
+  }
+
+  function addRule(column: string) {
+    setUserRules((prev) => [...prev, column]);
+    setChoice(`${USER_RULE}${column}`, { fixId: "clear", value: "", rule: { min: "", max: "" } });
+  }
+
+  function removeRule(column: string) {
+    setUserRules((prev) => prev.filter((c) => c !== column));
+    setChoices((prev) => {
+      const next = { ...prev };
+      delete next[`${USER_RULE}${column}`];
+      return next;
+    });
+  }
+
   /** Editing cut-offs means the user wants them applied, so pick "cap" if nothing is chosen. */
   function setCutoffs(issue: Issue, cutoffs: CutoffChoice) {
     const current = choices[issue.id]?.fixId;
@@ -464,16 +631,18 @@ export default function App() {
     });
   }
 
-  const missingValue = report?.issues.some((issue) => {
+  const missingValue = issues.some((issue) => {
     const choice = choices[issue.id];
     const fix = issue.fixes.find((f) => f.id === choice?.fixId);
     return fix?.needs_value && choice.value.trim() === "";
   });
 
   // Cut-offs that can't be used block the download while their fix is selected.
-  const badCutoffs = report?.issues.some((issue) => {
+  const badCutoffs = issues.some((issue) => {
     const choice = choices[issue.id];
-    return choice?.cutoffs && choice.fixId !== "leave" && cutoffProblem(choice.cutoffs) !== null;
+    if (!choice || choice.fixId === "leave") return false;
+    if (choice.cutoffs && cutoffProblem(choice.cutoffs) !== null) return true;
+    return choice.rule ? rangeProblem(choice.rule.min, choice.rule.max, "Limit") !== null : false;
   });
 
   return (
@@ -507,7 +676,7 @@ export default function App() {
           <ul className="overview">
             {groups.map((g) => (
               <li key={g.id} className={g.issues.length === 0 ? "clear" : undefined}>
-                {g.issues.length > 0 ? (
+                {showCard(g) ? (
                   <a href={`#${g.id}`}>{g.label}</a>
                 ) : (
                   <span>{g.label}</span>
@@ -524,13 +693,14 @@ export default function App() {
           </ul>
 
           {groups
-            .filter((g) => g.issues.length > 0)
+            .filter(showCard)
             .map((g) => {
               const recommendable = g.issues.filter((i) => i.fixes.some((f) => f.recommended));
               return (
                 <section key={g.id} id={g.id} className="issue">
                   <h2>
-                    {g.label} <span className="count">{plural(g.count, g.unit)}</span>
+                    {g.label}{" "}
+                    {g.count > 0 && <span className="count">{plural(g.count, g.unit)}</span>}
                   </h2>
                   <div className="intro">
                     <p className="hint">{g.hint}</p>
@@ -545,7 +715,10 @@ export default function App() {
                       )}
                       <button
                         className="link-button"
-                        onClick={() => clearFixes(g.issues)}
+                        onClick={() => {
+                          clearFixes(g.issues);
+                          if (g.id === "invalid") setUserRules([]);
+                        }}
                         disabled={!g.issues.some((i) => choices[i.id]?.fixId !== "leave")}
                         aria-label={`Clear selected fixes for ${g.label}`}
                       >
@@ -554,95 +727,145 @@ export default function App() {
                     </div>
                   </div>
 
-                  <div className="table-wrap">
-                    <table className="fixes">
-                      <colgroup>
-                        <col className="col-column" />
-                        <col className="col-affected" />
-                        <col className="col-fix" />
-                      </colgroup>
-                      <thead>
-                        <tr>
-                          <th>{g.id === "duplicates" ? "Rows" : "Column"}</th>
-                          <th>Affected</th>
-                          <th>Fix</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {g.issues.map((issue) => {
-                          const choice = choices[issue.id];
-                          const selected = issue.fixes.find((f) => f.id === choice?.fixId);
-                          return (
-                            <Fragment key={issue.id}>
-                              <tr>
-                                <td className="column">
-                                  <span className="name">
-                                    {g.id === "duplicates" ? "All columns" : issue.columns.join(", ")}
-                                  </span>
-                                  {/* Rows with a value review show the changes there instead. */}
-                                  {issue.detail && !issue.review && (
-                                    <span className="detail">{issue.detail}</span>
-                                  )}
-                                </td>
-                                <td className="affected">
-                                  {issue.count.toLocaleString()}{" "}
-                                  <span className="muted">{percent(issue.count, report.rows)}</span>
-                                </td>
-                                <td>
-                                  <div className="fix">
-                                    <select
-                                      aria-label={`Fix for ${issue.title}`}
-                                      value={choice?.fixId ?? "leave"}
-                                      onChange={(e) => setChoice(issue.id, { fixId: e.target.value })}
-                                    >
-                                      {issue.fixes.map((f) => (
-                                        <option key={f.id} value={f.id}>
-                                          {f.label}
-                                          {f.recommended ? " (recommended)" : ""}
-                                        </option>
-                                      ))}
-                                    </select>
-                                    {selected?.needs_value && (
-                                      <input
-                                        type="text"
-                                        aria-label={`Value to fill ${issue.columns[0]} with`}
-                                        placeholder="Value to fill with"
-                                        value={choice?.value ?? ""}
-                                        onChange={(e) => setChoice(issue.id, { value: e.target.value })}
-                                      />
+                  {g.issues.length === 0 && (
+                    <p className="note">No values break the suggested rules.</p>
+                  )}
+                  {g.issues.length > 0 && (
+                    <div className="table-wrap">
+                      <table className="fixes">
+                        <colgroup>
+                          <col className="col-column" />
+                          <col className="col-affected" />
+                          <col className="col-fix" />
+                        </colgroup>
+                        <thead>
+                          <tr>
+                            <th>{g.id === "duplicates" ? "Rows" : "Column"}</th>
+                            <th>Affected</th>
+                            <th>Fix</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {g.issues.map((issue) => {
+                            const choice = choices[issue.id];
+                            const selected = issue.fixes.find((f) => f.id === choice?.fixId);
+                            return (
+                              <Fragment key={issue.id}>
+                                <tr>
+                                  <td className="column">
+                                    <span className="name">
+                                      {g.id === "duplicates" ? "All columns" : issue.columns.join(", ")}
+                                    </span>
+                                    {/* Rows with a value review show the changes there instead. */}
+                                    {issue.detail && !issue.review && (
+                                      <span className="detail">{issue.detail}</span>
                                     )}
-                                  </div>
-                                </td>
-                              </tr>
-                              {issue.cutoffs && choice?.cutoffs && (
-                                <tr className="review-row">
-                                  <td colSpan={3}>
-                                    <CutoffPanel
-                                      issue={issue}
-                                      info={issue.cutoffs}
-                                      choice={choice}
-                                      onChange={(next) => setCutoffs(issue, next)}
-                                    />
+                                  </td>
+                                  <td className="affected">
+                                    {issue.rule?.source === "user" ? (
+                                      <span className="muted">—</span>
+                                    ) : (
+                                      <>
+                                        {issue.count.toLocaleString()}{" "}
+                                        <span className="muted">{percent(issue.count, report.rows)}</span>
+                                      </>
+                                    )}
+                                  </td>
+                                  <td>
+                                    <div className="fix">
+                                      <select
+                                        aria-label={`Fix for ${issue.title}`}
+                                        value={choice?.fixId ?? "leave"}
+                                        onChange={(e) => setChoice(issue.id, { fixId: e.target.value })}
+                                      >
+                                        {issue.fixes.map((f) => (
+                                          <option key={f.id} value={f.id}>
+                                            {f.label}
+                                            {f.recommended ? " (recommended)" : ""}
+                                          </option>
+                                        ))}
+                                      </select>
+                                      {selected?.needs_value && (
+                                        <input
+                                          type="text"
+                                          aria-label={`Value to fill ${issue.columns[0]} with`}
+                                          placeholder="Value to fill with"
+                                          value={choice?.value ?? ""}
+                                          onChange={(e) => setChoice(issue.id, { value: e.target.value })}
+                                        />
+                                      )}
+                                    </div>
                                   </td>
                                 </tr>
-                              )}
-                              {issue.review && choice?.review && (
-                                <tr className="review-row">
-                                  <td colSpan={3}>
-                                    <ReviewPanel
-                                      review={issue.review}
-                                      choice={choice.review}
-                                      onChange={(next) => setReview(issue, next)}
-                                    />
-                                  </td>
-                                </tr>
-                              )}
-                            </Fragment>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
+                                {issue.rule && choice?.rule && (
+                                  <tr className="review-row">
+                                    <td colSpan={3}>
+                                      <RulePanel
+                                        issue={issue}
+                                        choice={choice}
+                                        summary={report.numbers[issue.columns[0]]}
+                                        onChange={(next) => setRule(issue, next)}
+                                        onRemove={
+                                          issue.rule.source === "user"
+                                            ? () => removeRule(issue.columns[0])
+                                            : undefined
+                                        }
+                                      />
+                                    </td>
+                                  </tr>
+                                )}
+                                {issue.cutoffs && choice?.cutoffs && (
+                                  <tr className="review-row">
+                                    <td colSpan={3}>
+                                      <CutoffPanel
+                                        issue={issue}
+                                        info={issue.cutoffs}
+                                        choice={choice}
+                                        onChange={(next) => setCutoffs(issue, next)}
+                                      />
+                                    </td>
+                                  </tr>
+                                )}
+                                {issue.review && choice?.review && (
+                                  <tr className="review-row">
+                                    <td colSpan={3}>
+                                      <ReviewPanel
+                                        review={issue.review}
+                                        choice={choice.review}
+                                        onChange={(next) => setReview(issue, next)}
+                                      />
+                                    </td>
+                                  </tr>
+                                )}
+                              </Fragment>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+
+                  {g.id === "invalid" && ruleColumns.length > 0 && (
+                    // A button-sized label with the native column picker laid invisibly over
+                    // it: a <select> is always as wide as its longest option.
+                    <label className="add-rule">
+                      + Add a rule
+                      <select
+                        aria-label="Add a rule for a column"
+                        value=""
+                        onChange={(e) => e.target.value && addRule(e.target.value)}
+                      >
+                        <option value="" disabled>
+                          Choose a column
+                        </option>
+                        {ruleColumns.map((c) => (
+                          <option key={c} value={c}>
+                            {c}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  )}
 
                   {g.id === "duplicates" && (
                     <details>

@@ -23,8 +23,8 @@ def frame(*columns: pd.Series) -> pd.DataFrame:
     return pd.DataFrame({c.name: c for c in columns})
 
 
-# Ages with two typos, and enough values for percentiles.
-AGES = column(list(rng.integers(20, 70, 198)) + [250, 199], "age")
+# Visit counts with two extreme values, and enough values for percentiles.
+AGES = column(list(rng.integers(20, 70, 198)) + [250, 199], "visits")
 
 
 # ------------------------------------------------------------------- which columns are checked
@@ -48,7 +48,7 @@ def test_identifier_columns(series):
 @pytest.mark.parametrize(
     "series",
     [
-        pytest.param(AGES, id="age"),
+        pytest.param(AGES, id="visits"),
         pytest.param(column(rng.integers(30_000, 90_000, 50), "income"), id="income"),
         pytest.param(column([0.5, 0.05, 1.5, 2.0] * 5, "dose"), id="decimals below one"),
         pytest.param(column(rng.integers(0, 40, 50), "phone_calls"), id="a count of calls"),
@@ -93,7 +93,7 @@ def test_cutoffs_describe_the_usual_range_and_the_distribution():
 
 
 def test_percentiles_need_enough_values():
-    small = column([30, 32, 35, 36, 38, 40, 41, 43, 45, 47, 250], "age")
+    small = column([30, 32, 35, 36, 38, 40, 41, 43, 45, 47, 250], "visits")
     (issue,) = detect_outliers(frame(small))
     assert not issue.cutoffs.percentiles_ok
 
@@ -113,23 +113,23 @@ def test_percentiles_need_enough_values():
 )
 def test_invalid_cutoffs_are_rejected(fields):
     with pytest.raises(ValidationError):
-        FixOutliers(column="age", action="cap", **fields)
+        FixOutliers(column="visits", action="cap", **fields)
 
 
 def test_percentile_cap_uses_real_values():
     df = frame(AGES)
-    out = apply_steps(df, [FixOutliers(column="age", action="cap", lower_pct=1, upper_pct=99)])
-    numbers = out["age"].astype(int)
+    out = apply_steps(df, [FixOutliers(column="visits", action="cap", lower_pct=1, upper_pct=99)])
+    numbers = out["visits"].astype(int)
     p1 = int(AGES.astype(int).quantile(0.01, interpolation="nearest"))
     p99 = int(AGES.astype(int).quantile(0.99, interpolation="nearest"))
     assert (numbers.min(), numbers.max()) == (p1, p99)
-    assert set(out["age"]) <= set(AGES)  # whole numbers stay whole, no new values
+    assert set(out["visits"]) <= set(AGES)  # whole numbers stay whole, no new values
 
 
 def test_percentile_drop_rows():
-    out = apply_steps(frame(AGES), [FixOutliers(column="age", action="drop_rows", upper_pct=99)])
+    out = apply_steps(frame(AGES), [FixOutliers(column="visits", action="drop_rows", upper_pct=99)])
     assert len(out) < len(AGES)
-    assert "250" not in set(out["age"])
+    assert "250" not in set(out["visits"])
 
 
 def test_one_sided_cut_offs_leave_the_other_side_alone():
@@ -147,8 +147,14 @@ def test_own_values_are_written_in_the_columns_style():
 
 
 def test_api_accepts_percentile_steps(client):
-    csv = ("age\n" + "\n".join(AGES) + "\n").encode()
-    step = {"op": "fix_outliers", "column": "age", "action": "cap", "lower_pct": 1, "upper_pct": 99}
+    csv = ("visits\n" + "\n".join(AGES) + "\n").encode()
+    step = {
+        "op": "fix_outliers",
+        "column": "visits",
+        "action": "cap",
+        "lower_pct": 1,
+        "upper_pct": 99,
+    }
     res = client.post(
         "/transform", files={"file": ("d.csv", csv, "text/csv")}, data={"steps": json.dumps([step])}
     )
@@ -158,19 +164,19 @@ def test_api_accepts_percentile_steps(client):
 
 def test_percentiles_come_from_the_column_as_uploaded():
     # Another fix drops the two highest ages first; the 99th percentile must not shift.
-    ages = column(list(range(1, 199)) + [5000, 6000], "age")
+    ages = column(list(range(1, 199)) + [5000, 6000], "visits")
     other = column(["x"] * 198 + ["drop", "drop"], "k")
     steps = [
-        FixOutliers(column="age", action="drop_rows", lower=0, upper=4000),
-        FixOutliers(column="age", action="cap", upper_pct=99),
+        FixOutliers(column="visits", action="drop_rows", lower=0, upper=4000),
+        FixOutliers(column="visits", action="cap", upper_pct=99),
     ]
     out = apply_steps(frame(ages, other), steps)
     # 99th percentile of all 200 values is 198; of the 198 left after the drop it would be 196.
-    assert out["age"].astype(int).max() == 198
+    assert out["visits"].astype(int).max() == 198
     assert len(out) == 198
 
 
 def test_detail_lists_each_outlying_value_once():
-    ages = column(list(range(30, 50)) + [120, 120, 150], "age")
+    ages = column(list(range(30, 50)) + [120, 120, 150], "visits")
     (issue,) = detect_outliers(frame(ages))
     assert issue.detail == "Found 150, 120"

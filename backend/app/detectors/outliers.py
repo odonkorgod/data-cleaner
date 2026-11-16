@@ -12,8 +12,9 @@ import pandas as pd
 
 from app.config import SAMPLE_ROWS
 from app.csv_io import to_json_records
-from app.detectors._format import MAX_EXAMPLES
+from app.detectors._format import worst_values
 from app.models import FixOption, Issue, OutlierCutoffs
+from app.rules import suggested_rule
 from app.values import (
     column_kind,
     format_number,
@@ -21,32 +22,20 @@ from app.values import (
     is_mostly_numeric,
     outlier_range,
     present_numbers,
+    quantile_grid,
     to_numbers,
 )
 
-# Numbers in the summary are shown with at most this many decimals. Display only: the fix
-# itself always uses the exact values.
-DISPLAY_DECIMALS = 2
 # Suggested percentile cut-offs, and the fewest values for which percentiles mean anything
 # (with fewer, the 1st percentile is just the smallest value).
 DEFAULT_PERCENTILES = (1.0, 99.0)
 MIN_VALUES_FOR_PERCENTILES = 100
-# Quantiles sent to the UI for previews: every half percentile, 0 to 100.
-QUANTILE_POINTS = [i / 200 for i in range(201)]
 
 
 def _written(series: pd.Series, numbers: pd.Series, value: float) -> str:
     """How a value is written in the column ("1.50", not "1.5")."""
     matches = series[numbers == value]
     return str(matches.iloc[0]) if not matches.empty else format_number(value, series.dropna())
-
-
-def _short(text: str) -> str:
-    """Shorten long decimals for display ("1.23571" -> "1.24"); other text is unchanged."""
-    whole, dot, decimals = text.partition(".")
-    if dot and len(decimals) > DISPLAY_DECIMALS and decimals.isdigit():
-        return f"{float(text):.{DISPLAY_DECIMALS}f}"
-    return text
 
 
 def detect_outliers(df: pd.DataFrame) -> list[Issue]:
@@ -58,6 +47,11 @@ def detect_outliers(df: pd.DataFrame) -> list[Issue]:
             continue
         if column_kind(series) == "ordinal":
             continue
+        # Values breaking a validity rule (a negative age) are reported as invalid instead,
+        # and left out here so they don't skew the usual range.
+        rule = suggested_rule(series)
+        if rule is not None:
+            series = series.where(~rule.violations(to_numbers(series)))
         bounds = outlier_range(series)
         if bounds is None:
             continue
@@ -70,10 +64,7 @@ def detect_outliers(df: pd.DataFrame) -> list[Issue]:
 
         # Most extreme first: furthest from the middle of the usual range.
         middle = (lower + upper) / 2
-        extremes = (numbers[mask] - middle).abs().sort_values(ascending=False).index
-        # Each value once: "found 150, 120", not "found 150, 120, 120".
-        distinct = dict.fromkeys(_short(str(series[i])) for i in extremes)
-        examples = ", ".join(list(distinct)[:MAX_EXAMPLES])
+        examples = worst_values(series, (numbers[mask] - middle).abs())
 
         present = present_numbers(series)
         cutoffs = OutlierCutoffs(
@@ -83,7 +74,7 @@ def detect_outliers(df: pd.DataFrame) -> list[Issue]:
             lower_text=_written(series, numbers, lower),
             upper_text=_written(series, numbers, upper),
             values=len(present),
-            quantiles=present.quantile(QUANTILE_POINTS, interpolation="nearest").tolist(),
+            quantiles=quantile_grid(present),
             percentiles_ok=len(present) >= MIN_VALUES_FOR_PERCENTILES,
             lower_pct=DEFAULT_PERCENTILES[0],
             upper_pct=DEFAULT_PERCENTILES[1],

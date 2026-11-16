@@ -21,6 +21,7 @@ Each fix is a small JSON object discriminated by `op`, validated with Pydantic (
 ```json
 {"op": "standardize_values", "column": "city", "case": "title", "merge": {"new yrok": "new york"}}
 {"op": "fix_type_mismatch", "column": "age", "action": "clear"}
+{"op": "fix_invalid", "column": "age", "min": 0, "max": 120, "action": "clear"}
 {"op": "fix_outliers", "column": "age", "lower": 18, "upper": 90, "action": "cap"}
 {"op": "fix_outliers", "column": "income", "upper_pct": 99, "action": "cap"}
 {"op": "fill_nulls", "column": "age", "strategy": "median"}
@@ -36,6 +37,7 @@ Steps always run in a **fixed order** (the order above), not the order they were
 |---|---|---|
 | Missingness | Empty cells | Only truly empty cells; `NA`, `None` etc. are kept as text |
 | Inconsistent data | Same value written differently | Case and spacing variants are grouped; in categories, the column's usual case style is applied and near-duplicates (typos, punctuation) are suggested as merges |
+| Invalid values | Numbers that break a rule | Rules suggested from the column name (age 0–120, month 1–12, percent 0–100 or 0–1, latitude/longitude, year, non-negative quantities like price or weight) or from the data (≤ 1% negative among 20+ values looks like sign errors); users can edit them or add their own. Recommended fix: clear the cells |
 | Outliers | Numbers far from the usual range | Tukey's fences (1.5 × IQR), needs 8+ numbers. Skips IDs, keys and codes (by name, leading zeros, or unique sequential numbers) and ordinal scales. Cut-offs: the usual range, percentiles (1st/99th suggested, 100+ values) or the user's own values |
 | Data type mismatch | Text in a number column | Column is at least 80% numbers; the rest is flagged |
 | Duplicate rows | Rows that repeat exactly | Count is the extra copies a fix would remove |
@@ -49,6 +51,12 @@ For a text column of repeating categories with at most 100 distinct values, the 
 - **Case style:** the column's most common style by cells (Title Case, UPPERCASE or lowercase). Guards keep correct values intact: deliberate mixed case (`eBay`, `McDonald`, `O'Neil`) is never changed; in Title Case, short all-caps values (`USA`, `NASA`) and acronyms inside values (`NYC Office`) are kept, small words stay lowercase (`Bank of America`), and only the first letter of a word is capitalized (`They're`, not `They'Re`).
 - **Suggested merges:** same letters with different punctuation (`N.Y.C.` → `NYC`), or typos: one edit in words of 5–8 letters, two from 9, only swapped neighbours at 4 letters, none below. The shorter word sets the allowance, so `Austria` is not a typo of `Australia`; values with different numbers (`Room 101`/`Room 102`) never match. Rare values merge into common ones, never in chains.
 - **Merges** are keyed by the value's group key (trimmed, single-spaced, lowercased), so they stay valid whichever case style is chosen.
+
+### Invalid values vs outliers
+
+An **outlier** is unusual but possible (an income of 2,500,000); an **invalid value** breaks a rule (an age of -4, a month of 13). They're fixed differently: outliers can be capped, but capping -4 to 0 would invent an age, so invalid values are cleared (then filled like any missing value, if the user chooses) or their rows dropped. Invalid values are fixed before outliers and left out of outlier detection, so nothing is reported twice.
+
+Name rules have guards against look-alike names: `age_days` is a duration, `price_change` can be negative, and IDs and codes never get rules. Some rules depend on the use case (an age of 4 is fine in a census, not in a customer list), so every suggested rule is editable, and "Add a rule" sets a range on any number column. `/analyze` returns `numbers` (a quantile grid per number column) so the UI can preview any rule without another request. Rules live in `backend/app/rules.py`.
 
 ### Outlier cut-offs
 
@@ -84,6 +92,7 @@ backend/            FastAPI + pandas
     csv_io.py       encoding/delimiter detection, CSV in and out
     values.py       number parsing, outlier range, column kinds (shared by detectors and fixes)
     categories.py   text categories: case styles, grouping, merge suggestions
+    rules.py        validity rules: from column names, from the data
     detectors/      one module per issue type, registered in detectors/__init__.py
     transform.py    applies fix steps in fixed order
   tests/
@@ -127,6 +136,7 @@ cd frontend && npm run build   # typechecks, then builds
 
 - [x] Detectors: whitespace and casing, mixed types (numbers), outliers
 - [x] Fuzzy category matching (typos, punctuation) with user-reviewed merges
+- [x] Invalid values: suggested and user-defined validity rules
 - [ ] Detectors: constant columns, mixed date formats
 - [ ] Before/after preview of affected rows
 - [ ] Excel and JSON input

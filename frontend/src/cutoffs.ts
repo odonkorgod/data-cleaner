@@ -20,7 +20,7 @@ export function initialCutoffs(c: OutlierCutoffs): CutoffChoice {
 }
 
 /** An empty box means no limit (null); anything else must be a number (NaN if not). */
-function parse(text: string): number | null {
+export function parseBound(text: string): number | null {
   const t = text.trim();
   if (t === "") return null;
   const n = Number(t);
@@ -29,8 +29,19 @@ function parse(text: string): number | null {
 
 function typed(choice: CutoffChoice): [number | null, number | null] {
   return choice.method === "percentile"
-    ? [parse(choice.lowerPct), parse(choice.upperPct)]
-    : [parse(choice.lower), parse(choice.upper)];
+    ? [parseBound(choice.lowerPct), parseBound(choice.upperPct)]
+    : [parseBound(choice.lower), parseBound(choice.upper)];
+}
+
+/** What's wrong with a typed range of values ("what" names the bounds), or null if usable. */
+export function rangeProblem(lowerText: string, upperText: string, what: string): string | null {
+  const lower = parseBound(lowerText);
+  const upper = parseBound(upperText);
+  if (Number.isNaN(lower) || Number.isNaN(upper)) return `${what}s must be numbers.`;
+  if (lower === null && upper === null) return `Enter at least one ${what.toLowerCase()}.`;
+  if (lower !== null && upper !== null && lower > upper)
+    return `The lower ${what.toLowerCase()} must not be above the upper one.`;
+  return null;
 }
 
 /** What's wrong with the typed cut-offs, or null if they can be used. */
@@ -74,7 +85,7 @@ export function resolveCutoffs(
 
 /** Estimated share of values outside the cut-offs, to the nearest half percent. */
 export function shareOutside(
-  c: OutlierCutoffs,
+  c: { quantiles: number[] },
   lower: number | null,
   upper: number | null,
 ): number {
