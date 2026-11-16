@@ -5,6 +5,10 @@ are outliers, and which spellings are variants of the same value. Detectors and 
 both call them, so what the user is shown and what a fix does always agree.
 """
 
+import re
+from dataclasses import dataclass
+from typing import Literal
+
 import pandas as pd
 
 # A column counts as "mostly numeric" when at least this share of its values are numbers.
@@ -14,6 +18,35 @@ MOSTLY_NUMERIC = 0.8
 MIN_VALUES_FOR_OUTLIERS = 8
 # Tukey's rule: values beyond 1.5 interquartile ranges from the quartiles are outliers.
 IQR_FACTOR = 1.5
+
+# --- Column kinds (see column_kind) ---
+# Categories repeat: at most this share of a column's values may be distinct.
+MAX_DISTINCT_SHARE = 0.5
+# Whole numbers spanning at most this many steps (1–10, 0–10, 1–5) form an ordinal scale.
+MAX_ORDINAL_SPAN = 10
+# Whole numbers that are all different, over at least this many rows, may be IDs...
+MIN_VALUES_FOR_ID = 20
+# ...if they are close to a sequence (1001, 1002, 1005, ...) or the column is named like one.
+MAX_ID_GAP = 2.0  # (max - min + 1) / count
+# Only consulted for columns of unique whole numbers. Matches "id", "customer_id", "Customer ID",
+# "id_number", "account_number", "invoice_no", "key" in any case, and "customerId"/"orderID" only
+# in camelCase, so ordinary words ending in "id" ("paid", "valid") don't match.
+ID_NAME = re.compile(
+    r"(?i:^id$|^id[_\s-]|[_\s-](id|number|no|num|code)$|^(key|uuid|guid|code)$)"
+    r"|[a-z](Id|ID|Number|No|Num|Code)$"
+)
+
+# --- Distribution shape (see distribution_shape) ---
+# Fewer numbers than this and skewness/kurtosis are too noisy to judge the shape.
+MIN_VALUES_FOR_SHAPE = 20
+# Rules of thumb for "roughly normal": nearly symmetric, and tails like a bell curve's.
+# The thresholds are fixed rather than widened for small samples on purpose: wrongly
+# recommending the median for normal data costs little (the two are close), while wrongly
+# recommending the mean for skewed data is the mistake worth avoiding. In simulation, normal
+# data passes 72% of the time at 30 values and 92%+ from 100; lognormal/exponential data
+# passes under 10% from 30 values and never from 100.
+MAX_NORMAL_SKEW = 0.5
+MAX_NORMAL_KURTOSIS = 1.0  # excess kurtosis: 0 for a normal distribution
 
 
 def to_numbers(series: pd.Series) -> pd.Series:
@@ -49,6 +82,82 @@ def non_numeric_mask(series: pd.Series) -> pd.Series:
     return series.notna() & to_numbers(series).isna()
 
 
+def _looks_like_ids(numbers: pd.Series, name: object) -> bool:
+    """Unique whole numbers that are near-sequential, or in a column named like an ID.
+
+    Uniqueness alone is not enough: incomes or prices can all differ without being IDs.
+    """
+    if len(numbers) < MIN_VALUES_FOR_ID or numbers.nunique() != len(numbers):
+        return False
+    sequential = (numbers.max() - numbers.min() + 1) / len(numbers) <= MAX_ID_GAP
+    return sequential or bool(ID_NAME.search(str(name)))
+
+
+def present_numbers(series: pd.Series) -> pd.Series:
+    """The column's values that are numbers, ignoring empty cells and stray text."""
+    return to_numbers(series).dropna()
+
+
+ColumnKind = Literal["empty", "continuous", "ordinal", "nominal", "unique"]
+
+
+def column_kind(series: pd.Series) -> ColumnKind:
+    """What sort of data a column holds, judged from its non-empty values.
+
+    * ``ordinal``: whole numbers on a short, repeating scale, e.g. satisfaction scores 1–10.
+    * ``continuous``: any other numbers (ages, prices, measurements).
+    * ``nominal``: text categories that repeat, e.g. city or plan tier.
+    * ``unique``: values that (almost) never repeat: IDs, names, free-text notes.
+    * ``empty``: no values at all.
+
+    Mostly-numeric columns are judged by their numbers, ignoring stray text.
+    """
+    present = series.dropna()
+    if present.empty:
+        return "empty"
+
+    if is_mostly_numeric(series):
+        numbers = present_numbers(series)
+        distinct = numbers.nunique()
+        whole = bool((numbers % 1 == 0).all())
+        repeats = distinct <= MAX_DISTINCT_SHARE * len(numbers)
+        if whole and repeats and numbers.max() - numbers.min() <= MAX_ORDINAL_SPAN:
+            return "ordinal"
+        if whole and _looks_like_ids(numbers, series.name):
+            return "unique"
+        return "continuous"
+
+    repeats = present.nunique() <= MAX_DISTINCT_SHARE * len(present)
+    return "nominal" if repeats else "unique"
+
+
+def is_categorical(series: pd.Series) -> bool:
+    """True for categories, whether text (nominal) or an ordered numeric scale (ordinal)."""
+    return column_kind(series) in ("nominal", "ordinal")
+
+
+@dataclass(frozen=True)
+class Shape:
+    skewness: float
+    kurtosis: float  # excess kurtosis: 0 for a normal distribution
+
+    @property
+    def roughly_normal(self) -> bool:
+        return abs(self.skewness) <= MAX_NORMAL_SKEW and abs(self.kurtosis) <= MAX_NORMAL_KURTOSIS
+
+
+def distribution_shape(numbers: pd.Series) -> Shape | None:
+    """Skewness and kurtosis of some numbers, or None if there are too few to judge.
+
+    This deliberately measures *how far* from normal the data is rather than running a
+    significance test: on large files a test like Shapiro-Wilk rejects normality over
+    differences too small to matter, and for choosing mean vs median the size is what counts.
+    """
+    if len(numbers) < MIN_VALUES_FOR_SHAPE or numbers.nunique() < 2:
+        return None
+    return Shape(skewness=float(numbers.skew()), kurtosis=float(numbers.kurt()))
+
+
 def format_number(value: float, present: pd.Series) -> str:
     """Write a computed number in the column's existing style.
 
@@ -75,7 +184,7 @@ def outlier_range(series: pd.Series) -> tuple[float, float] | None:
     if iqr == 0:
         return None
     inside = numbers[numbers.between(q1 - IQR_FACTOR * iqr, q3 + IQR_FACTOR * iqr)]
-    return float(inside.min()), float(inside.max())
+    return round(float(inside.min()), 2), round(float(inside.max()), 2)
 
 
 def normalize_text(value: str) -> str:

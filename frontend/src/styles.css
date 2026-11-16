@@ -112,15 +112,15 @@ h1 {
 }
 
 .fixes .col-column {
-  width: 45%;
+  width: 38%;
 }
 
 .fixes .col-affected {
-  width: 17%;
+  width: 13%;
 }
 
 .fixes .col-fix {
-  width: 38%;
+  width: 49%;
 }
 
 .fixes tr:last-child td {
@@ -165,10 +165,37 @@ h1 {
   box-sizing: border-box;
 }
 
-.hint {
+.intro {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 0.25rem 1rem;
   margin: -0.5rem 0 0.5rem;
+}
+
+.hint {
+  margin: 0;
   opacity: 0.7;
   font-size: 0.9rem;
+}
+
+.actions {
+  display: flex;
+  gap: 1rem;
+}
+
+/* A quiet, text-style action that sits beside the card's hint. */
+button.link-button {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font-size: 0.9rem;
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 2px;
 }
 
 .overview {

@@ -160,6 +160,27 @@ export default function App() {
     setChoices((prev) => ({ ...prev, [issueId]: { ...prev[issueId], ...patch } }));
   }
 
+  /** Reset these issues to "leave as is", forgetting any typed fill values. */
+  function clearFixes(issues: Issue[]) {
+    setChoices((prev) => {
+      const next = { ...prev };
+      for (const issue of issues) next[issue.id] = { fixId: "leave", value: "" };
+      return next;
+    });
+  }
+
+  /** Switch every issue that has a recommendation to it. Others keep their current choice. */
+  function applyRecommended(issues: Issue[]) {
+    setChoices((prev) => {
+      const next = { ...prev };
+      for (const issue of issues) {
+        const fix = issue.fixes.find((f) => f.recommended);
+        if (fix) next[issue.id] = { ...prev[issue.id], fixId: fix.id };
+      }
+      return next;
+    });
+  }
+
   const missingValue = report?.issues.some((issue) => {
     const choice = choices[issue.id];
     const fix = issue.fixes.find((f) => f.id === choice?.fixId);
@@ -215,82 +236,106 @@ export default function App() {
 
           {groups
             .filter((g) => g.issues.length > 0)
-            .map((g) => (
-              <section key={g.id} id={g.id} className="issue">
-                <h2>
-                  {g.label} <span className="count">{plural(g.count, g.unit)}</span>
-                </h2>
-                <p className="hint">{g.hint}</p>
+            .map((g) => {
+              const recommendable = g.issues.filter((i) => i.fixes.some((f) => f.recommended));
+              return (
+                <section key={g.id} id={g.id} className="issue">
+                  <h2>
+                    {g.label} <span className="count">{plural(g.count, g.unit)}</span>
+                  </h2>
+                  <div className="intro">
+                    <p className="hint">{g.hint}</p>
+                    <div className="actions">
+                      {recommendable.length > 0 && (
+                        <button
+                          className="link-button"
+                          onClick={() => applyRecommended(recommendable)}
+                        >
+                          Use recommended fixes
+                        </button>
+                      )}
+                      <button
+                        className="link-button"
+                        onClick={() => clearFixes(g.issues)}
+                        disabled={!g.issues.some((i) => choices[i.id]?.fixId !== "leave")}
+                        aria-label={`Clear selected fixes for ${g.label}`}
+                      >
+                        Clear
+                      </button>
+                    </div>
+                  </div>
 
-                <div className="table-wrap">
-                  <table className="fixes">
-                    <colgroup>
-                      <col className="col-column" />
-                      <col className="col-affected" />
-                      <col className="col-fix" />
-                    </colgroup>
-                    <thead>
-                      <tr>
-                        <th>{g.id === "duplicates" ? "Rows" : "Column"}</th>
-                        <th>Affected</th>
-                        <th>Fix</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {g.issues.map((issue) => {
-                        const choice = choices[issue.id];
-                        const selected = issue.fixes.find((f) => f.id === choice?.fixId);
-                        return (
-                          <tr key={issue.id}>
-                            <td className="column">
-                              <span className="name">
-                                {g.id === "duplicates" ? "All columns" : issue.columns.join(", ")}
-                              </span>
-                              {issue.detail && <span className="detail">{issue.detail}</span>}
-                            </td>
-                            <td className="affected">
-                              {issue.count.toLocaleString()}{" "}
-                              <span className="muted">{percent(issue.count, report.rows)}</span>
-                            </td>
-                            <td>
-                              <div className="fix">
-                                <select
-                                  aria-label={`Fix for ${issue.title}`}
-                                  value={choice?.fixId ?? "leave"}
-                                  onChange={(e) => setChoice(issue.id, { fixId: e.target.value })}
-                                >
-                                  {issue.fixes.map((f) => (
-                                    <option key={f.id} value={f.id}>
-                                      {f.label}
-                                    </option>
-                                  ))}
-                                </select>
-                                {selected?.needs_value && (
-                                  <input
-                                    type="text"
-                                    aria-label={`Value to fill ${issue.columns[0]} with`}
-                                    placeholder="Value to fill with"
-                                    value={choice?.value ?? ""}
-                                    onChange={(e) => setChoice(issue.id, { value: e.target.value })}
-                                  />
-                                )}
-                              </div>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
+                  <div className="table-wrap">
+                    <table className="fixes">
+                      <colgroup>
+                        <col className="col-column" />
+                        <col className="col-affected" />
+                        <col className="col-fix" />
+                      </colgroup>
+                      <thead>
+                        <tr>
+                          <th>{g.id === "duplicates" ? "Rows" : "Column"}</th>
+                          <th>Affected</th>
+                          <th>Fix</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {g.issues.map((issue) => {
+                          const choice = choices[issue.id];
+                          const selected = issue.fixes.find((f) => f.id === choice?.fixId);
+                          return (
+                            <tr key={issue.id}>
+                              <td className="column">
+                                <span className="name">
+                                  {g.id === "duplicates" ? "All columns" : issue.columns.join(", ")}
+                                </span>
+                                {issue.detail && <span className="detail">{issue.detail}</span>}
+                              </td>
+                              <td className="affected">
+                                {issue.count.toLocaleString()}{" "}
+                                <span className="muted">{percent(issue.count, report.rows)}</span>
+                              </td>
+                              <td>
+                                <div className="fix">
+                                  <select
+                                    aria-label={`Fix for ${issue.title}`}
+                                    value={choice?.fixId ?? "leave"}
+                                    onChange={(e) => setChoice(issue.id, { fixId: e.target.value })}
+                                  >
+                                    {issue.fixes.map((f) => (
+                                      <option key={f.id} value={f.id}>
+                                        {f.label}
+                                        {f.recommended ? " (recommended)" : ""}
+                                      </option>
+                                    ))}
+                                  </select>
+                                  {selected?.needs_value && (
+                                    <input
+                                      type="text"
+                                      aria-label={`Value to fill ${issue.columns[0]} with`}
+                                      placeholder="Value to fill with"
+                                      value={choice?.value ?? ""}
+                                      onChange={(e) => setChoice(issue.id, { value: e.target.value })}
+                                    />
+                                  )}
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
 
-                {g.id === "duplicates" && (
-                  <details>
-                    <summary>Show example rows</summary>
-                    <SampleTable rows={g.issues[0].samples} />
-                  </details>
-                )}
-              </section>
-            ))}
+                  {g.id === "duplicates" && (
+                    <details>
+                      <summary>Show example rows</summary>
+                      <SampleTable rows={g.issues[0].samples} />
+                    </details>
+                  )}
+                </section>
+              );
+            })}
 
           <button onClick={onDownload} disabled={busy || missingValue}>
             Download cleaned CSV{steps.length > 0 ? ` (${steps.length} fix${steps.length === 1 ? "" : "es"})` : ""}

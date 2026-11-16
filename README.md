@@ -41,6 +41,20 @@ Steps always run in a **fixed order** (the order above), not the order they were
 
 Thresholds live in `backend/app/values.py`.
 
+### Recommended fill for missing values
+
+Each missing-values issue marks one fix as `recommended` and explains why in its `detail` line. The UI tags that option and offers "Use recommended fixes"; nothing is applied until the user chooses. The choice follows the kind of data (`column_kind` in `values.py`):
+
+| Column holds | Example | Recommended |
+|---|---|---|
+| Roughly normal numbers (\|skewness\| ≤ 0.5 and \|excess kurtosis\| ≤ 1, 20+ values) | heights | Mean |
+| Other numbers (skewed, heavy- or light-tailed, or too few to judge) | incomes | Median |
+| An ordinal scale: whole numbers spanning ≤ 10 steps that repeat | satisfaction 1–10, Likert 1–5, 0/1 flags | Mode |
+| Text categories that repeat (≤ 50% distinct) | city, plan tier | Mode |
+| IDs or free text (values rarely repeat) | `customer_id`, notes | Leave as is |
+
+Normality is judged by effect size (skewness, kurtosis), not a significance test, which on large files rejects normality over differences too small to matter. The thresholds are deliberately strict because recommending the median for normal data costs little, while recommending the mean for skewed data is the mistake worth avoiding.
+
 ## Project layout
 
 ```
