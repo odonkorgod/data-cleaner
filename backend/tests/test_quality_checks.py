@@ -92,7 +92,11 @@ def test_outliers_detected_with_usual_range(make_df):
     assert issue.detail == "Usual range 30 to 47, found 250"
     cap = next(f for f in issue.fixes if f.id == "cap")
     assert cap.step == {
-        "op": "fix_outliers", "column": "age", "lower": 30.0, "upper": 47.0, "action": "cap"
+        "op": "fix_outliers",
+        "column": "age",
+        "lower": 30.0,
+        "upper": 47.0,
+        "action": "cap",
     }
 
 
@@ -139,3 +143,37 @@ def test_analyze_groups_every_issue_into_a_category(client):
     csv = ("age,city\n" + "\n".join(rows) + "\n").encode()
     body = client.post("/analyze", files={"file": ("d.csv", csv, "text/csv")}).json()
     assert {i["category"] for i in body["issues"]} == {"outliers", "type_mismatch", "inconsistent"}
+
+
+# ----------------------------------------------------- outliers with many decimal places
+
+# The edge values 1.236 and 2.344 would round *inward* to 1.24 and 2.34.
+PRECISE = "x\n" + "".join(
+    f"{v}\n"
+    for v in ["1.236", "1.5", "1.6", "1.7", "1.8", "1.9", "2.0", "2.1", "2.2", "2.344", "9.87654"]
+)
+
+
+def test_outlier_range_is_exact_not_rounded(make_df):
+    assert outlier_range(make_df(PRECISE)["x"]) == (1.236, 2.344)
+
+
+def test_values_at_the_edge_of_the_range_are_not_outliers(make_df):
+    (issue,) = detect_outliers(make_df(PRECISE))
+    assert issue.count == 1  # only 9.87654
+
+
+def test_outlier_summary_rounds_long_decimals_for_display_only(make_df):
+    (issue,) = detect_outliers(make_df(PRECISE))
+    assert issue.detail == "Usual range 1.24 to 2.34, found 9.88"
+    cap = next(f for f in issue.fixes if f.id == "cap")
+    assert cap.label == "Cap to the usual range (1.24 to 2.34)"
+    assert (cap.step["lower"], cap.step["upper"]) == (1.236, 2.344)
+
+
+def test_capping_leaves_edge_values_alone_and_uses_the_exact_bound(make_df):
+    df = make_df(PRECISE)
+    (issue,) = detect_outliers(df)
+    cap = next(f for f in issue.fixes if f.id == "cap")
+    out = apply_steps(df, [FixOutliers(**cap.step)])
+    assert out["x"].tolist() == df["x"].tolist()[:-1] + ["2.344"]

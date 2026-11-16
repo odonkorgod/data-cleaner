@@ -33,6 +33,8 @@ export interface FixOption {
   step: FixStep | null;
   /** True when the user must type a value (e.g. fill with a constant). */
   needs_value: boolean;
+  /** True for the option we suggest; the issue's `detail` says why. */
+  recommended: boolean;
 }
 
 export interface Issue {

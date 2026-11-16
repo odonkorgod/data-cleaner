@@ -97,6 +97,8 @@ class FixOption(BaseModel):
     step: dict[str, Any] | None = None
     # True when the user must supply ``value`` (e.g. fill with a constant).
     needs_value: bool = False
+    # True for the option we suggest; the issue's ``detail`` says why.
+    recommended: bool = False
 
 
 class Issue(BaseModel):

@@ -18,8 +18,11 @@ from app.models import (
 from app.values import (
     canonical_spellings,
     format_number,
+    is_mostly_numeric,
+    mode_value,
     non_numeric_mask,
     numeric_values,
+    present_numbers,
     to_numbers,
 )
 
@@ -79,17 +82,20 @@ def _fill_nulls(df: pd.DataFrame, step: FillNulls) -> pd.DataFrame:
     numbers = numeric_values(series)
 
     if step.strategy in ("mean", "median"):
-        if numbers is None:
+        # Stray text in a mostly numeric column is ignored, so it doesn't block the fill.
+        if not is_mostly_numeric(series):
             raise TransformError(
                 f"Cannot compute the {step.strategy} of non-numeric '{step.column}'."
             )
-        value = numbers.mean() if step.strategy == "mean" else numbers.median()
-        fill = format_number(float(value), series.dropna())
+        found = present_numbers(series)
+        value = found.mean() if step.strategy == "mean" else found.median()
+        fill = format_number(round(float(value), 2), series.dropna())
     elif step.strategy == "mode":
-        modes = series.mode(dropna=True)
-        if modes.empty:
+        # Number columns compare as numbers, so "7", "7.0" and "7.00" count as one value.
+        mode = mode_value(series)
+        if mode is None:
             raise TransformError(f"Column '{step.column}' has no values to take a mode from.")
-        fill = modes.iloc[0]
+        fill = mode
     else:  # constant
         if step.value is None:
             raise TransformError(f"A value is required to fill '{step.column}'.")

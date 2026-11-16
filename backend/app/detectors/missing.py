@@ -1,18 +1,100 @@
-"""Detect columns that contain missing values."""
+"""Detect columns that contain missing values, and recommend how to fill each one.
+
+The recommendation follows the kind of data in the column (see ``column_kind`` in values.py):
+
+* roughly normal numbers  -> mean (it is the typical value of a bell curve)
+* other continuous numbers -> median (robust to skew and heavy tails)
+* categories, including ordinal scales like 1–10 scores -> mode (the most common value)
+* IDs and free text        -> leave as is (no single value would be right)
+"""
+
+from dataclasses import dataclass
 
 import pandas as pd
 
 from app.config import SAMPLE_ROWS
 from app.csv_io import to_json_records
 from app.models import FixOption, Issue
-from app.values import numeric_values
+from app.values import (
+    MAX_NORMAL_SKEW,
+    column_kind,
+    distribution_shape,
+    is_mostly_numeric,
+    present_numbers,
+)
+
+
+@dataclass(frozen=True)
+class FillAdvice:
+    fix_id: str  # id of the recommended FixOption
+    reason: str  # one line, shown to the user
+
+
+def _number(value: float) -> str:
+    return str(int(value)) if float(value).is_integer() else f"{value:g}"
+
+
+def recommend_fill(series: pd.Series) -> FillAdvice | None:
+    """The recommended way to fill this column's missing values, with a short reason."""
+    kind = column_kind(series)
+
+    if kind == "empty":
+        return None
+    if kind == "unique":
+        return FillAdvice(
+            "leave",
+            "Values rarely repeat (like IDs or free text), so no single value fits. "
+            "Leave blank, or fill with your own placeholder.",
+        )
+    if kind == "nominal":
+        distinct = series.nunique()
+        return FillAdvice(
+            "fill_mode",
+            f"Categorical ({distinct} distinct values), so the mode (most common value) fits best.",
+        )
+    if kind == "ordinal":
+        numbers = present_numbers(series)
+        low, high = _number(numbers.min()), _number(numbers.max())
+        if numbers.nunique() == 2:
+            return FillAdvice(
+                "fill_mode",
+                f"Only two values ({low} and {high}), treated as categories, "
+                "so the mode (most common value) fits best.",
+            )
+        return FillAdvice(
+            "fill_mode",
+            f"Whole numbers on a {low}–{high} scale, treated as ordinal categories, "
+            "so the mode (most common value) fits best.",
+        )
+
+    # Continuous: choose between mean and median by the shape of the distribution.
+    numbers = present_numbers(series)
+    shape = distribution_shape(numbers)
+    if shape is None:
+        return FillAdvice(
+            "fill_median",
+            f"Too few numbers ({len(numbers)}) to judge the distribution, "
+            "so the median is the safer choice.",
+        )
+    if shape.roughly_normal:
+        return FillAdvice(
+            "fill_mean",
+            f"Roughly normal (skewness {shape.skewness:.1f}), so the mean is the typical value.",
+        )
+    if abs(shape.skewness) > MAX_NORMAL_SKEW:
+        direction = "right" if shape.skewness > 0 else "left"
+        why = f"Skewed to the {direction} (skewness {shape.skewness:.1f})"
+    else:
+        why = f"Not bell-shaped (kurtosis {shape.kurtosis:.1f})"
+    return FillAdvice("fill_median", f"{why}, so the median is more typical than the mean.")
 
 
 def detect_missing(df: pd.DataFrame) -> list[Issue]:
     issues: list[Issue] = []
 
     for column in df.columns:
-        mask = df[column].isna()
+        series = df[column]
+        mask = series.isna()
         count = int(mask.sum())
         if count == 0:
             continue
@@ -24,8 +106,8 @@ def detect_missing(df: pd.DataFrame) -> list[Issue]:
                 step={"op": "drop_null_rows", "column": column},
             ),
         ]
-        # Cells are text; offer mean/median only when every present value is a number.
-        if numeric_values(df[column]) is not None:
+        # Mean and median use the column's numbers, ignoring any stray text.
+        if is_mostly_numeric(series):
             for strategy in ("mean", "median"):
                 fixes.append(
                     FixOption(
@@ -37,7 +119,7 @@ def detect_missing(df: pd.DataFrame) -> list[Issue]:
         fixes.append(
             FixOption(
                 id="fill_mode",
-                label="Fill with the most common value",
+                label="Fill with the mode",
                 step={"op": "fill_nulls", "column": column, "strategy": "mode"},
             )
         )
@@ -51,6 +133,11 @@ def detect_missing(df: pd.DataFrame) -> list[Issue]:
         )
         fixes.append(FixOption(id="leave", label="Leave as is", step=None))
 
+        advice = recommend_fill(series)
+        if advice is not None:
+            for fix in fixes:
+                fix.recommended = fix.id == advice.fix_id
+
         issues.append(
             Issue(
                 id=f"missing:{column}",
@@ -59,6 +146,7 @@ def detect_missing(df: pd.DataFrame) -> list[Issue]:
                 title=f"Missing values in '{column}'",
                 columns=[str(column)],
                 count=count,
+                detail=advice.reason if advice else None,
                 samples=to_json_records(df[mask].head(SAMPLE_ROWS)),
                 fixes=fixes,
             )
