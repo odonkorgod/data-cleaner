@@ -1,0 +1,35 @@
+[project]
+name = "data-cleaner-backend"
+version = "0.1.0"
+description = "Stateless API that detects data quality issues in CSV files and applies user-chosen fixes"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "python-multipart>=0.0.9",
+    "pandas>=2.2",
+    "pydantic>=2.7",
+    "charset-normalizer>=3.3",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "httpx>=0.27",
+    "ruff>=0.6",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+
+[tool.ruff.lint.flake8-bugbear]
+# FastAPI's File()/Form() in default arguments are the framework's idiom, not a bug.
+extend-immutable-calls = ["fastapi.File", "fastapi.Form"]

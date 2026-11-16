@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+.ruff_cache/
+
+# Node
+node_modules/
+dist/
+
+# Env and editor
+.env
+.env.*
+!.env.example
+.vscode/
+.idea/
+.DS_Store
+
+# Never commit data files: this app is designed to never store user data,
+# and the repo shouldn't either.
+*.csv
+!backend/tests/fixtures/*.csv

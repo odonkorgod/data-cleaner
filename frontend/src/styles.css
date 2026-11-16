@@ -1,0 +1,118 @@
+:root {
+  color-scheme: light dark;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  line-height: 1.5;
+}
+
+body {
+  margin: 0;
+}
+
+main {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 2rem 1rem 4rem;
+}
+
+h1 {
+  margin-bottom: 0.25rem;
+}
+
+.privacy {
+  margin-top: 0;
+  opacity: 0.7;
+  font-size: 0.9rem;
+}
+
+.upload {
+  display: block;
+  margin: 1.5rem 0;
+  padding: 1.5rem;
+  border: 2px dashed currentColor;
+  border-radius: 8px;
+  text-align: center;
+  cursor: pointer;
+  opacity: 0.85;
+}
+
+.upload input {
+  display: none;
+}
+
+.summary {
+  font-weight: 600;
+}
+
+.issue {
+  margin: 1rem 0;
+  padding: 1rem;
+  border: 1px solid color-mix(in srgb, currentColor 25%, transparent);
+  border-radius: 8px;
+}
+
+.issue h2 {
+  margin: 0 0 0.75rem;
+  font-size: 1.05rem;
+}
+
+.count {
+  margin-left: 0.4rem;
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, currentColor 15%, transparent);
+  font-size: 0.8rem;
+  font-weight: 500;
+}
+
+.samples {
+  width: 100%;
+  margin-bottom: 0.75rem;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+
+.samples th,
+.samples td {
+  padding: 0.25rem 0.5rem;
+  border-bottom: 1px solid color-mix(in srgb, currentColor 15%, transparent);
+  text-align: left;
+}
+
+.samples td.null {
+  opacity: 0.5;
+}
+
+.fix {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+select,
+input[type="text"],
+button {
+  padding: 0.5rem 0.75rem;
+  border-radius: 6px;
+  border: 1px solid color-mix(in srgb, currentColor 35%, transparent);
+  font: inherit;
+}
+
+button {
+  margin-top: 1rem;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.status {
+  opacity: 0.7;
+}
+
+.error {
+  color: #c0392b;
+  font-weight: 600;
+}
