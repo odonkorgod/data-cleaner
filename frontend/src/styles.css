@@ -64,28 +64,154 @@ h1 {
   font-weight: 500;
 }
 
-.samples {
+/* Tables scroll sideways inside their card instead of spilling out of it. */
+.table-wrap {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.samples,
+.fixes {
   width: 100%;
-  margin-bottom: 0.75rem;
   border-collapse: collapse;
   font-size: 0.85rem;
 }
 
 .samples th,
-.samples td {
-  padding: 0.25rem 0.5rem;
+.samples td,
+.fixes th,
+.fixes td {
+  padding: 0.4rem 0.5rem;
   border-bottom: 1px solid color-mix(in srgb, currentColor 15%, transparent);
   text-align: left;
+  vertical-align: top;
+}
+
+.samples th,
+.fixes th {
+  font-weight: 600;
+  opacity: 0.7;
+}
+
+/* Example rows stay on one line; long values are cut short (full text on hover). */
+.samples th,
+.samples td {
+  max-width: 14rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .samples td.null {
   opacity: 0.5;
 }
 
+/* Fixed layout so every card lines its columns up the same way. */
+.fixes {
+  table-layout: fixed;
+}
+
+.fixes .col-column {
+  width: 45%;
+}
+
+.fixes .col-affected {
+  width: 17%;
+}
+
+.fixes .col-fix {
+  width: 38%;
+}
+
+.fixes tr:last-child td {
+  border-bottom: 0;
+}
+
+.fixes .name {
+  display: block;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.fixes .detail {
+  display: block;
+  margin-top: 0.15rem;
+  opacity: 0.7;
+  overflow-wrap: anywhere;
+}
+
+.fixes .affected {
+  white-space: nowrap;
+}
+
+.muted {
+  opacity: 0.6;
+}
+
 .fix {
   display: flex;
-  gap: 0.5rem;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.fix select,
+.fix input {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.hint {
+  margin: -0.5rem 0 0.5rem;
+  opacity: 0.7;
+  font-size: 0.9rem;
+}
+
+.overview {
+  margin: 0 0 1.5rem;
+  padding: 0;
+  list-style: none;
+  border: 1px solid color-mix(in srgb, currentColor 25%, transparent);
+  border-radius: 8px;
+}
+
+.overview li {
+  display: flex;
   flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 0.25rem 1rem;
+  padding: 0.6rem 1rem;
+  border-bottom: 1px solid color-mix(in srgb, currentColor 15%, transparent);
+}
+
+.overview li:last-child {
+  border-bottom: 0;
+}
+
+.overview a {
+  color: inherit;
+  font-weight: 600;
+}
+
+.overview li.clear {
+  opacity: 0.55;
+}
+
+.overview-count {
+  font-size: 0.9rem;
+}
+
+details {
+  margin-top: 0.75rem;
+  font-size: 0.9rem;
+}
+
+details summary {
+  cursor: pointer;
+  opacity: 0.8;
+}
+
+details .table-wrap {
+  margin-top: 0.5rem;
 }
 
 select,
@@ -115,4 +241,33 @@ button:disabled {
 .error {
   color: #c0392b;
   font-weight: 600;
+}
+
+/* On narrow screens, each fix row stacks instead of squeezing three columns side by side. */
+@media (max-width: 560px) {
+  .fixes thead {
+    display: none;
+  }
+
+  .fixes,
+  .fixes tbody,
+  .fixes tr,
+  .fixes td {
+    display: block;
+  }
+
+  .fixes tr {
+    padding: 0.5rem 0;
+    border-bottom: 1px solid color-mix(in srgb, currentColor 15%, transparent);
+  }
+
+  .fixes tr:last-child {
+    border-bottom: 0;
+  }
+
+  .fixes td {
+    padding: 0.15rem 0;
+    border-bottom: 0;
+  }
+
 }

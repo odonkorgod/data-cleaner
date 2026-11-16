@@ -20,6 +20,7 @@ def detect_duplicates(df: pd.DataFrame) -> list[Issue]:
         Issue(
             id="duplicates:all",
             type="duplicate_rows",
+            category="duplicates",
             title="Duplicate rows",
             columns=[str(c) for c in df.columns],
             count=extra,

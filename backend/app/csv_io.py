@@ -2,7 +2,7 @@
 
 Every cell is read as text, and only empty cells count as missing. That way a file the user
 did not ask to change comes back unchanged: leading zeros, "NA" country codes and integer
-formatting all survive. Numeric work (mean, median) converts on demand; see ``numeric_values``.
+formatting all survive. Numeric work converts on demand; see values.py.
 
 The delimiter, encoding and line endings of the upload are remembered in ``CsvFormat`` and
 reused when writing, so the cleaned file has the same shape as the original.
@@ -128,17 +128,6 @@ def write_csv(df: pd.DataFrame, fmt: CsvFormat) -> tuple[bytes, str]:
         return text.encode(encoding), encoding
     except UnicodeEncodeError:
         return text.encode("utf-8"), "utf-8"
-
-
-def numeric_values(series: pd.Series) -> pd.Series | None:
-    """The column's non-missing values as numbers, or None if any of them is not a number."""
-    present = series.dropna()
-    if present.empty:
-        return None
-    numbers = pd.to_numeric(present, errors="coerce")
-    if numbers.isna().any():
-        return None
-    return numbers.astype(float)
 
 
 def to_json_records(df: pd.DataFrame) -> list[dict]:

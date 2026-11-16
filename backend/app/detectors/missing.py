@@ -3,8 +3,9 @@
 import pandas as pd
 
 from app.config import SAMPLE_ROWS
-from app.csv_io import numeric_values, to_json_records
+from app.csv_io import to_json_records
 from app.models import FixOption, Issue
+from app.values import numeric_values
 
 
 def detect_missing(df: pd.DataFrame) -> list[Issue]:
@@ -54,6 +55,7 @@ def detect_missing(df: pd.DataFrame) -> list[Issue]:
             Issue(
                 id=f"missing:{column}",
                 type="missing_values",
+                category="missingness",
                 title=f"Missing values in '{column}'",
                 columns=[str(column)],
                 count=count,

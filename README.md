@@ -6,25 +6,40 @@ A web app for analysts. Upload a messy CSV, review the data quality issues it fi
 
 ## How it works
 
-1. `POST /analyze` receives the CSV and returns a list of issues (missing values, duplicate rows, ...). Each issue has a count, a few sample rows, and a menu of possible fixes.
+1. `POST /analyze` receives the CSV and returns a list of issues. Each issue belongs to a category (missingness, inconsistent data, outliers, data type mismatch, duplicate rows) and has a count, a one-line detail, a few sample rows, and a menu of possible fixes. The UI shows a summary per category rather than a preview per column.
 2. The user picks a fix for each issue in the browser.
 3. `POST /transform` receives the same CSV again plus the chosen fixes, applies them, and returns the cleaned CSV.
 
 The server is stateless, so the browser keeps the file between steps and re-sends it. Uploads are capped at 25 MB (set `MAX_UPLOAD_MB` to change it).
 
-**Untouched data stays untouched.** Every cell is read as text and only empty cells count as missing, so leading zeros (`00123`), values like `NA` or `None`, and integer formatting survive. The cleaned file is written with the upload's delimiter, encoding and line endings. Numbers are only parsed where a fix needs them (mean, median). See `backend/app/csv_io.py`.
+**Untouched data stays untouched.** Every cell is read as text and only empty cells count as missing, so leading zeros (`00123`), values like `NA` or `None`, and integer formatting survive. The cleaned file is written with the upload's delimiter, encoding and line endings. Numbers are only parsed where a check or fix needs them (mean, median, outliers, type mismatch). See `backend/app/csv_io.py`.
 
 ### Fix steps
 
 Each fix is a small JSON object discriminated by `op`, validated with Pydantic (`backend/app/models.py`) and mirrored in TypeScript (`frontend/src/types.ts`):
 
 ```json
+{"op": "standardize_values", "column": "city"}
+{"op": "fix_type_mismatch", "column": "age", "action": "clear"}
+{"op": "fix_outliers", "column": "age", "lower": 18, "upper": 90, "action": "cap"}
 {"op": "fill_nulls", "column": "age", "strategy": "median"}
 {"op": "drop_null_rows", "column": "name"}
 {"op": "drop_duplicates", "keep": "first"}
 ```
 
-Steps always run in a **fixed order** (fill nulls, then drop rows, then drop duplicates), not the order they were chosen. That makes results predictable, and it means rows that become identical after a fill are caught as duplicates. See `STEP_ORDER` in `models.py`.
+Steps always run in a **fixed order** (the order above), not the order they were chosen. Values are fixed first (spellings, stray text, then outliers, so a mean fill isn't skewed by them), then gaps are filled or dropped, and duplicates are checked last so rows that become identical after earlier fixes are caught. See `STEP_ORDER` in `models.py`.
+
+### Detectors
+
+| Category | What counts | Rule |
+|---|---|---|
+| Missingness | Empty cells | Only truly empty cells; `NA`, `None` etc. are kept as text |
+| Inconsistent data | Same value, different case or spacing | `"New York"`, `"new york "` are grouped; the most common spelling wins |
+| Outliers | Numbers far from the usual range | Tukey's fences (1.5 × IQR), needs 8+ numbers; capping uses the most extreme normal value |
+| Data type mismatch | Text in a number column | Column is at least 80% numbers; the rest is flagged |
+| Duplicate rows | Rows that repeat exactly | Count is the extra copies a fix would remove |
+
+Thresholds live in `backend/app/values.py`.
 
 ## Project layout
 
@@ -34,6 +49,7 @@ backend/            FastAPI + pandas
     main.py         endpoints
     models.py       issue and fix-step schemas
     csv_io.py       encoding/delimiter detection, CSV in and out
+    values.py       number parsing, outlier range, spelling variants (shared by detectors and fixes)
     detectors/      one module per issue type, registered in detectors/__init__.py
     transform.py    applies fix steps in fixed order
   tests/
@@ -67,7 +83,7 @@ cd frontend && npm run build   # typechecks, then builds
 
 ## Adding a detector
 
-1. Create `backend/app/detectors/my_issue.py` with a function `(DataFrame) -> list[Issue]`.
+1. Create `backend/app/detectors/my_issue.py` with a function `(DataFrame) -> list[Issue]`. Give each issue a `category` (add a new one to `Category` in `models.py` and `CATEGORIES` in `App.tsx` if none fits).
 2. If it needs a new kind of fix, add a step model to `models.py`, add it to `FixStep` and `STEP_ORDER`, and handle it in `transform.py`.
 3. Register the detector in `detectors/__init__.py`.
 4. Add the matching type to `frontend/src/types.ts`.
@@ -75,8 +91,8 @@ cd frontend && npm run build   # typechecks, then builds
 
 ## Roadmap
 
-- [ ] Detectors: whitespace and casing, mixed types, constant columns
-- [ ] Detectors: inconsistent categories (fuzzy matching), mixed date formats, outliers
+- [x] Detectors: whitespace and casing, mixed types (numbers), outliers
+- [ ] Detectors: constant columns, fuzzy category matching (typos), mixed date formats
 - [ ] Before/after preview of affected rows
 - [ ] Excel and JSON input
 - [ ] Deploy (API + static frontend)

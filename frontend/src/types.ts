@@ -1,14 +1,30 @@
 // These mirror backend/app/models.py. Keep the two in sync.
 
 export type FixStep =
-  | { op: "drop_null_rows"; column: string }
+  | { op: "standardize_values"; column: string }
+  | { op: "fix_type_mismatch"; column: string; action: "clear" | "drop_rows" }
+  | {
+      op: "fix_outliers";
+      column: string;
+      lower: number;
+      upper: number;
+      action: "cap" | "drop_rows";
+    }
   | {
       op: "fill_nulls";
       column: string;
       strategy: "mean" | "median" | "mode" | "constant";
       value?: string | null;
     }
+  | { op: "drop_null_rows"; column: string }
   | { op: "drop_duplicates"; keep: "first" | "last" };
+
+export type Category =
+  | "missingness"
+  | "inconsistent"
+  | "outliers"
+  | "type_mismatch"
+  | "duplicates";
 
 export interface FixOption {
   id: string;
@@ -22,9 +38,13 @@ export interface FixOption {
 export interface Issue {
   id: string;
   type: string;
+  category: Category;
   title: string;
   columns: string[];
+  /** Affected cells (extra rows, for duplicates). */
   count: number;
+  /** One short line for the summary, e.g. examples of the problem values. */
+  detail: string | null;
   samples: Record<string, unknown>[];
   fixes: FixOption[];
 }

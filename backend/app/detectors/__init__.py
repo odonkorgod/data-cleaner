@@ -9,13 +9,19 @@ from collections.abc import Callable
 import pandas as pd
 
 from app.detectors.duplicates import detect_duplicates
+from app.detectors.inconsistent import detect_inconsistent
 from app.detectors.missing import detect_missing
+from app.detectors.outliers import detect_outliers
+from app.detectors.type_mismatch import detect_type_mismatch
 from app.models import Issue
 
 Detector = Callable[[pd.DataFrame], list[Issue]]
 
 DETECTORS: list[Detector] = [
     detect_missing,
+    detect_inconsistent,
+    detect_outliers,
+    detect_type_mismatch,
     detect_duplicates,
 ]
 

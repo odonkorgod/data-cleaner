@@ -5,8 +5,23 @@ Steps run in the fixed order defined by ``STEP_ORDER`` in models.py, not the ord
 
 import pandas as pd
 
-from app.csv_io import numeric_values
-from app.models import STEP_ORDER, DropDuplicates, DropNullRows, FillNulls, FixStep
+from app.models import (
+    STEP_ORDER,
+    DropDuplicates,
+    DropNullRows,
+    FillNulls,
+    FixOutliers,
+    FixStep,
+    FixTypeMismatch,
+    StandardizeValues,
+)
+from app.values import (
+    canonical_spellings,
+    format_number,
+    non_numeric_mask,
+    numeric_values,
+    to_numbers,
+)
 
 
 class TransformError(ValueError):
@@ -18,15 +33,44 @@ def _require_column(df: pd.DataFrame, column: str) -> None:
         raise TransformError(f"Column '{column}' does not exist in this file.")
 
 
-def _format_number(value: float, present: pd.Series) -> str:
-    """Write a computed fill value in the column's existing style.
+def _standardize_values(df: pd.DataFrame, step: StandardizeValues) -> pd.DataFrame:
+    _require_column(df, step.column)
+    mapping = canonical_spellings(df[step.column])
+    if not mapping:
+        return df
+    out = df.copy()
+    out[step.column] = df[step.column].replace(mapping)
+    return out
 
-    A whole number is written without a decimal point ("40") unless the column already uses
-    decimals or exponents ("40.0"), so integer columns stay integer columns.
-    """
-    if value.is_integer() and not present.str.contains(r"[.eE]").any():
-        return str(int(value))
-    return repr(value)
+
+def _fix_type_mismatch(df: pd.DataFrame, step: FixTypeMismatch) -> pd.DataFrame:
+    _require_column(df, step.column)
+    mask = non_numeric_mask(df[step.column])
+    if step.action == "drop_rows":
+        return df[~mask]
+    out = df.copy()
+    out.loc[mask, step.column] = None
+    return out
+
+
+def _as_text(bound: float, series: pd.Series, numbers: pd.Series) -> str:
+    """The bound as it is written in the column (e.g. "1.50"), so capped cells match it."""
+    matches = series[numbers == bound]
+    return matches.iloc[0] if not matches.empty else format_number(bound, series.dropna())
+
+
+def _fix_outliers(df: pd.DataFrame, step: FixOutliers) -> pd.DataFrame:
+    _require_column(df, step.column)
+    series = df[step.column]
+    numbers = to_numbers(series)  # NaN for empty and non-numeric cells, which are left alone
+    low, high = numbers < step.lower, numbers > step.upper
+
+    if step.action == "drop_rows":
+        return df[~(low | high)]
+    out = df.copy()
+    out.loc[low, step.column] = _as_text(step.lower, series, numbers)
+    out.loc[high, step.column] = _as_text(step.upper, series, numbers)
+    return out
 
 
 def _fill_nulls(df: pd.DataFrame, step: FillNulls) -> pd.DataFrame:
@@ -40,7 +84,7 @@ def _fill_nulls(df: pd.DataFrame, step: FillNulls) -> pd.DataFrame:
                 f"Cannot compute the {step.strategy} of non-numeric '{step.column}'."
             )
         value = numbers.mean() if step.strategy == "mean" else numbers.median()
-        fill = _format_number(float(value), series.dropna())
+        fill = format_number(float(value), series.dropna())
     elif step.strategy == "mode":
         modes = series.mode(dropna=True)
         if modes.empty:
@@ -76,7 +120,13 @@ def apply_steps(df: pd.DataFrame, steps: list[FixStep]) -> pd.DataFrame:
 
     result = df
     for step in ordered:
-        if isinstance(step, FillNulls):
+        if isinstance(step, StandardizeValues):
+            result = _standardize_values(result, step)
+        elif isinstance(step, FixTypeMismatch):
+            result = _fix_type_mismatch(result, step)
+        elif isinstance(step, FixOutliers):
+            result = _fix_outliers(result, step)
+        elif isinstance(step, FillNulls):
             result = _fill_nulls(result, step)
         elif isinstance(step, DropNullRows):
             result = _drop_null_rows(result, step)
