@@ -1,11 +1,32 @@
+/* Colors are set explicitly for light and dark rather than left to system colors: iOS WebKit
+   (every browser on iPhone) keeps form controls light in dark mode, and resolves Field and
+   Canvas to light colors too. */
 :root {
   color-scheme: light dark;
   font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
   line-height: 1.5;
+
+  --bg: #ffffff;
+  --text: #1a1a1a;
+  --field-bg: #ffffff;
+  --field-text: #1a1a1a;
+  --error: #c0392b;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #121212;
+    --text: #e8e8e8;
+    --field-bg: #2c2c2e;
+    --field-text: #f2f2f2;
+    --error: #ff7b6b;
+  }
 }
 
 body {
   margin: 0;
+  background: var(--bg);
+  color: var(--text);
 }
 
 main {
@@ -249,19 +270,24 @@ details .table-wrap {
 select,
 input[type="text"],
 button {
+  -webkit-appearance: none; /* drop iOS's own control styling (older Safari needs the prefix) */
+  appearance: none;
   padding: 0.5rem 0.75rem;
   border-radius: 6px;
-  border: 1px solid color-mix(in srgb, currentColor 35%, transparent);
+  border: 1px solid color-mix(in srgb, var(--field-text) 35%, transparent);
+  background-color: var(--field-bg);
+  color: var(--field-text);
   font: inherit;
+}
+
+input[type="text"]::placeholder {
+  color: color-mix(in srgb, var(--field-text) 50%, transparent);
 }
 
 /* Replace the native arrow (which hugs the right edge) with a chevron drawn in the text color,
    centred in its own padding so it lines up the same in every browser and theme. */
 select {
-  appearance: none;
   padding-right: 2.25rem;
-  background-color: Field;
-  color: FieldText;
   background-image:
     linear-gradient(45deg, transparent 50%, currentColor 50%),
     linear-gradient(135deg, currentColor 50%, transparent 50%);
@@ -290,7 +316,7 @@ button:disabled {
 }
 
 .error {
-  color: #c0392b;
+  color: var(--error);
   font-weight: 600;
 }
 
@@ -380,9 +406,10 @@ button:disabled {
 .values th {
   position: sticky;
   top: 0;
-  background: Canvas;
+  /* Solid, so rows scrolling underneath don't show through. */
+  background: var(--bg);
+  color: color-mix(in srgb, var(--text) 85%, var(--bg));
   font-weight: 600;
-  opacity: 0.85;
 }
 
 .values tr:last-child td {
