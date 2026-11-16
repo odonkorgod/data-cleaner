@@ -38,7 +38,7 @@ function plural(n: number, word: string): string {
 function percent(count: number, rows: number): string {
   if (rows === 0) return "";
   const p = (count / rows) * 100;
-  return p < 1 ? "<1%" : `${Math.round(p)}%`;
+  return p < 1 ? "(<1%)" : `(${Math.round(p)}%)`;
 }
 
 function buildSteps(issues: Issue[], choices: Record<string, Choice>): FixStep[] {
