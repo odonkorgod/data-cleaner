@@ -1,10 +1,9 @@
 """Detect columns that contain missing values."""
 
 import pandas as pd
-from pandas.api.types import is_numeric_dtype
 
 from app.config import SAMPLE_ROWS
-from app.csv_io import to_json_records
+from app.csv_io import numeric_values, to_json_records
 from app.models import FixOption, Issue
 
 
@@ -24,7 +23,8 @@ def detect_missing(df: pd.DataFrame) -> list[Issue]:
                 step={"op": "drop_null_rows", "column": column},
             ),
         ]
-        if is_numeric_dtype(df[column]):
+        # Cells are text; offer mean/median only when every present value is a number.
+        if numeric_values(df[column]) is not None:
             for strategy in ("mean", "median"):
                 fixes.append(
                     FixOption(

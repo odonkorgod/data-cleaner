@@ -46,3 +46,15 @@ def test_duplicates_counts_only_extra_copies(messy_df):
 
 def test_duplicates_returns_nothing_when_rows_are_unique():
     assert detect_duplicates(pd.DataFrame({"a": [1, 2, 3]})) == []
+
+
+def test_mean_and_median_need_every_present_value_to_be_a_number(make_df):
+    df = make_df("code,n\n12,1\nAB,2\n,3\n")
+    (issue,) = detect_missing(df)
+    assert not {"fill_mean", "fill_median"} & {f.id for f in issue.fixes}
+
+
+def test_entirely_empty_column_is_not_offered_mean_or_median(make_df):
+    df = make_df("a,b\n1,\n2,\n")
+    (issue,) = detect_missing(df)
+    assert not {"fill_mean", "fill_median"} & {f.id for f in issue.fixes}

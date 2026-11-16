@@ -4,8 +4,8 @@ Steps run in the fixed order defined by ``STEP_ORDER`` in models.py, not the ord
 """
 
 import pandas as pd
-from pandas.api.types import is_numeric_dtype
 
+from app.csv_io import numeric_values
 from app.models import STEP_ORDER, DropDuplicates, DropNullRows, FillNulls, FixStep
 
 
@@ -18,16 +18,29 @@ def _require_column(df: pd.DataFrame, column: str) -> None:
         raise TransformError(f"Column '{column}' does not exist in this file.")
 
 
+def _format_number(value: float, present: pd.Series) -> str:
+    """Write a computed fill value in the column's existing style.
+
+    A whole number is written without a decimal point ("40") unless the column already uses
+    decimals or exponents ("40.0"), so integer columns stay integer columns.
+    """
+    if value.is_integer() and not present.str.contains(r"[.eE]").any():
+        return str(int(value))
+    return repr(value)
+
+
 def _fill_nulls(df: pd.DataFrame, step: FillNulls) -> pd.DataFrame:
     _require_column(df, step.column)
     series = df[step.column]
+    numbers = numeric_values(series)
 
     if step.strategy in ("mean", "median"):
-        if not is_numeric_dtype(series):
+        if numbers is None:
             raise TransformError(
                 f"Cannot compute the {step.strategy} of non-numeric '{step.column}'."
             )
-        fill = series.mean() if step.strategy == "mean" else series.median()
+        value = numbers.mean() if step.strategy == "mean" else numbers.median()
+        fill = _format_number(float(value), series.dropna())
     elif step.strategy == "mode":
         modes = series.mode(dropna=True)
         if modes.empty:
@@ -36,14 +49,12 @@ def _fill_nulls(df: pd.DataFrame, step: FillNulls) -> pd.DataFrame:
     else:  # constant
         if step.value is None:
             raise TransformError(f"A value is required to fill '{step.column}'.")
+        if numbers is not None and pd.isna(pd.to_numeric(step.value, errors="coerce")):
+            raise TransformError(
+                f"'{step.column}' is numeric, so the fill value must be a number."
+            )
+        # Written exactly as typed, so "0" stays "0" and "007" stays "007".
         fill = step.value
-        if is_numeric_dtype(series):
-            try:
-                fill = pd.to_numeric(step.value)
-            except ValueError:
-                raise TransformError(
-                    f"'{step.column}' is numeric, so the fill value must be a number."
-                ) from None
 
     out = df.copy()
     out[step.column] = series.fillna(fill)

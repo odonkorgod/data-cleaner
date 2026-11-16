@@ -54,7 +54,7 @@ def health() -> dict[str, str]:
 async def analyze(file: UploadFile = File(...)) -> AnalyzeResponse:
     raw = await _read_upload(file)
     try:
-        df = read_csv(raw)
+        df, _ = read_csv(raw)
     except CsvReadError as e:
         raise HTTPException(status_code=400, detail=str(e)) from None
 
@@ -78,7 +78,7 @@ async def transform(
 
     raw = await _read_upload(file)
     try:
-        df = read_csv(raw)
+        df, fmt = read_csv(raw)
         cleaned = apply_steps(df, parsed)
     except CsvReadError as e:
         raise HTTPException(status_code=400, detail=str(e)) from None
@@ -86,9 +86,11 @@ async def transform(
         raise HTTPException(status_code=422, detail=str(e)) from None
 
     logger.info("transformed rows_in=%d rows_out=%d steps=%d", len(df), len(cleaned), len(parsed))
+    # Written back with the upload's delimiter, encoding and line endings.
+    content, encoding = write_csv(cleaned, fmt)
     return Response(
-        content=write_csv(cleaned),
-        media_type="text/csv",
+        content=content,
+        media_type=f"text/csv; charset={encoding}",
         headers={
             "Content-Disposition": 'attachment; filename="cleaned.csv"',
             "Cache-Control": "no-store",

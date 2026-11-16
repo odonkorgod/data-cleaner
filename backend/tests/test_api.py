@@ -92,3 +92,22 @@ def test_transform_bad_column_returns_422(client, messy_csv):
     res = client.post("/transform", files=_upload(messy_csv), data={"steps": steps})
     assert res.status_code == 422
     assert "missing_col" in res.json()["detail"]
+
+
+def test_transform_preserves_the_original_format(client):
+    raw = "id;zip;code;age\r\n1;00123;NA;36\r\n2;02134;;\r\n".encode("latin-1")
+    steps = json.dumps([{"op": "fill_nulls", "column": "age", "strategy": "mean"}])
+    res = client.post("/transform", files=_upload(raw), data={"steps": steps})
+    assert res.status_code == 200
+    assert res.content == b"id;zip;code;age\r\n1;00123;NA;36\r\n2;02134;;36\r\n"
+
+
+def test_transform_with_no_steps_returns_identical_bytes(client):
+    raw = b"id,age,zip\n1,36,00501\n2,,NA\n"
+    res = client.post("/transform", files=_upload(raw))
+    assert res.content == raw
+
+
+def test_analyze_single_column_file(client):
+    res = client.post("/analyze", files=_upload(b"email\na@x.com\n\nb@y.com\n"))
+    assert res.json()["columns"] == ["email"]

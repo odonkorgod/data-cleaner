@@ -12,6 +12,8 @@ A web app for analysts. Upload a messy CSV, review the data quality issues it fi
 
 The server is stateless, so the browser keeps the file between steps and re-sends it. Uploads are capped at 25 MB (set `MAX_UPLOAD_MB` to change it).
 
+**Untouched data stays untouched.** Every cell is read as text and only empty cells count as missing, so leading zeros (`00123`), values like `NA` or `None`, and integer formatting survive. The cleaned file is written with the upload's delimiter, encoding and line endings. Numbers are only parsed where a fix needs them (mean, median). See `backend/app/csv_io.py`.
+
 ### Fix steps
 
 Each fix is a small JSON object discriminated by `op`, validated with Pydantic (`backend/app/models.py`) and mirrored in TypeScript (`frontend/src/types.ts`):
