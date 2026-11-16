@@ -513,3 +513,43 @@ button:disabled {
   color: var(--warn);
   font-weight: 600;
 }
+
+/* --- Invalid values --- */
+
+/* A button sized to its label; the column picker covers it invisibly (see App.tsx). */
+.add-rule {
+  position: relative;
+  display: inline-block;
+  margin-top: 0.75rem;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid color-mix(in srgb, var(--field-text) 35%, transparent);
+  border-radius: 6px;
+  background: var(--field-bg);
+  color: var(--field-text);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.add-rule select {
+  position: absolute;
+  inset: 0;
+  box-sizing: border-box;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+/* The select is invisible, so show keyboard focus on the button around it. */
+.add-rule:has(select:focus-visible) {
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
+}
+
+button.link-button.remove {
+  margin-top: 0.5rem;
+  font-weight: 500;
+}

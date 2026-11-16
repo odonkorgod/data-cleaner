@@ -11,11 +11,13 @@ from app.models import (
     DropDuplicates,
     DropNullRows,
     FillNulls,
+    FixInvalid,
     FixOutliers,
     FixStep,
     FixTypeMismatch,
     StandardizeValues,
 )
+from app.rules import suggested_rule
 from app.values import (
     format_number,
     is_mostly_numeric,
@@ -68,6 +70,21 @@ def _as_text(bound: float, series: pd.Series, numbers: pd.Series) -> str:
     return matches.iloc[0] if not matches.empty else format_number(bound, series.dropna())
 
 
+def _fix_invalid(df: pd.DataFrame, step: FixInvalid) -> pd.DataFrame:
+    _require_column(df, step.column)
+    numbers = to_numbers(df[step.column])  # empty and non-numeric cells are left alone
+    bad = pd.Series(False, index=df.index)
+    if step.min is not None:
+        bad |= numbers < step.min
+    if step.max is not None:
+        bad |= numbers > step.max
+    if step.action == "drop_rows":
+        return df[~bad]
+    out = df.copy()
+    out.loc[bad, step.column] = None
+    return out
+
+
 def _percentile(numbers: pd.Series, pct: float | None) -> float | None:
     """The real data value at a percentile, so capped cells hold values the column already has."""
     if pct is None or numbers.empty:
@@ -84,7 +101,10 @@ def _resolve_percentiles(df: pd.DataFrame, step: FixOutliers) -> FixOutliers:
     if step.lower_pct is None and step.upper_pct is None:
         return step
     _require_column(df, step.column)
-    present = to_numbers(df[step.column]).dropna()
+    numbers = to_numbers(df[step.column])
+    # Like outlier detection, leave out values that break the column's suggested rule.
+    rule = suggested_rule(df[step.column])
+    present = (numbers[~rule.violations(numbers)] if rule else numbers).dropna()
     return step.model_copy(
         update={
             "lower": _percentile(present, step.lower_pct),
@@ -170,6 +190,8 @@ def apply_steps(df: pd.DataFrame, steps: list[FixStep]) -> pd.DataFrame:
             result = _standardize_values(result, step)
         elif isinstance(step, FixTypeMismatch):
             result = _fix_type_mismatch(result, step)
+        elif isinstance(step, FixInvalid):
+            result = _fix_invalid(result, step)
         elif isinstance(step, FixOutliers):
             result = _fix_outliers(result, step)
         elif isinstance(step, FillNulls):

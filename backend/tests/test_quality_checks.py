@@ -19,7 +19,8 @@ from app.values import outlier_range
 CITIES = "city,n\nNew York,1\nnew york,2\nNew York,3\n NEW YORK,4\nParis,5\nparis,6\nParis,7\n"
 # Ten ordinary ages and one typo.
 AGE_VALUES = ["30", "32", "35", "36", "38", "40", "41", "43", "45", "47", "250"]
-AGES = "age\n" + "".join(f"{a}\n" for a in AGE_VALUES)
+# Visit counts: an outlier (250), with no validity rule to break.
+AGES = "visits\n" + "".join(f"{a}\n" for a in AGE_VALUES)
 
 
 # ----------------------------------------------------------------------- inconsistent data
@@ -75,7 +76,7 @@ def test_type_mismatch_clear_and_drop(make_df):
 
 
 def test_outlier_range_snaps_to_real_values(make_df):
-    assert outlier_range(make_df(AGES)["age"]) == (30.0, 47.0)
+    assert outlier_range(make_df(AGES)["visits"]) == (30.0, 47.0)
 
 
 def test_outliers_detected_with_usual_range(make_df):
@@ -86,7 +87,7 @@ def test_outliers_detected_with_usual_range(make_df):
     cap = next(f for f in issue.fixes if f.id == "cap")
     assert cap.step == {
         "op": "fix_outliers",
-        "column": "age",
+        "column": "visits",
         "lower": 30.0,
         "upper": 47.0,
         "action": "cap",
@@ -133,7 +134,7 @@ def test_outlier_bounds_must_be_ordered():
 def test_analyze_groups_every_issue_into_a_category(client):
     # An outlier (250), stray text in a number column (n/a), and a spelling variant (rome).
     rows = [f"{age},Rome" for age in AGE_VALUES] + ["n/a,rome"]
-    csv = ("age,city\n" + "\n".join(rows) + "\n").encode()
+    csv = ("visits,city\n" + "\n".join(rows) + "\n").encode()
     body = client.post("/analyze", files={"file": ("d.csv", csv, "text/csv")}).json()
     assert {i["category"] for i in body["issues"]} == {"outliers", "type_mismatch", "inconsistent"}
 

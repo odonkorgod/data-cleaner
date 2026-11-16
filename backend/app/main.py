@@ -16,6 +16,7 @@ from pydantic import TypeAdapter, ValidationError
 from app.config import ALLOWED_ORIGINS, MAX_UPLOAD_BYTES
 from app.csv_io import CsvReadError, read_csv, write_csv
 from app.detectors import run_detectors
+from app.detectors.invalid import number_summaries
 from app.models import AnalyzeResponse, FixStep
 from app.transform import TransformError, apply_steps
 
@@ -60,7 +61,12 @@ async def analyze(file: UploadFile = File(...)) -> AnalyzeResponse:
 
     issues = run_detectors(df)
     logger.info("analyzed rows=%d cols=%d issues=%d", len(df), len(df.columns), len(issues))
-    return AnalyzeResponse(rows=len(df), columns=[str(c) for c in df.columns], issues=issues)
+    return AnalyzeResponse(
+        rows=len(df),
+        columns=[str(c) for c in df.columns],
+        issues=issues,
+        numbers=number_summaries(df),
+    )
 
 
 @app.post("/transform")

@@ -47,6 +47,28 @@ class FixTypeMismatch(BaseModel):
     action: Literal["clear", "drop_rows"]
 
 
+class FixInvalid(BaseModel):
+    """Deal with numbers that break a validity rule: below ``min`` or above ``max``.
+
+    A missing bound means no limit on that side. Clearing leaves the cells empty, so a fill
+    for missing values (which runs later) can fill them.
+    """
+
+    op: Literal["fix_invalid"] = "fix_invalid"
+    column: str
+    action: Literal["clear", "drop_rows"]
+    min: FiniteFloat | None = None
+    max: FiniteFloat | None = None
+
+    @model_validator(mode="after")
+    def _consistent(self) -> "FixInvalid":
+        if self.min is None and self.max is None:
+            raise ValueError("give at least one of min and max")
+        if self.min is not None and self.max is not None and self.min > self.max:
+            raise ValueError("min must not be greater than max")
+        return self
+
+
 class FixOutliers(BaseModel):
     """Cap (winsorize) or drop numbers outside a range.
 
@@ -95,19 +117,27 @@ class DropDuplicates(BaseModel):
 
 
 FixStep = Annotated[
-    StandardizeValues | FixTypeMismatch | FixOutliers | FillNulls | DropNullRows | DropDuplicates,
+    StandardizeValues
+    | FixTypeMismatch
+    | FixInvalid
+    | FixOutliers
+    | FillNulls
+    | DropNullRows
+    | DropDuplicates,
     Field(discriminator="op"),
 ]
 
 # Steps always run in this order, regardless of the order the user picked them:
-#   1. Fix individual values: spellings, then stray text, then outliers. Outliers are handled
-#      before fills so a mean or median fill isn't skewed by them.
+#   1. Fix individual values: spellings, then stray text, then invalid values, then outliers.
+#      Invalid values go before outliers so they don't distort the usual range, and all of
+#      these go before fills so a mean or median fill isn't skewed by them.
 #   2. Fill gaps, then drop rows that still have gaps.
 #   3. Drop duplicates last, so rows made identical by earlier fixes are caught.
 STEP_ORDER: dict[str, int] = {
     "standardize_values": 1,
     "fix_type_mismatch": 2,
-    "fix_outliers": 3,
+    "fix_invalid": 3,
+    "fix_outliers": 4,
     "fill_nulls": 10,
     "drop_null_rows": 20,
     "drop_duplicates": 30,
@@ -116,7 +146,9 @@ STEP_ORDER: dict[str, int] = {
 # ----------------------------------------------------------------------- issue reports
 
 # The groups the UI summarises issues under.
-Category = Literal["missingness", "inconsistent", "outliers", "type_mismatch", "duplicates"]
+Category = Literal[
+    "missingness", "inconsistent", "invalid", "outliers", "type_mismatch", "duplicates"
+]
 
 
 class FixOption(BaseModel):
@@ -169,6 +201,22 @@ class OutlierCutoffs(BaseModel):
     upper_pct: float
 
 
+class ValidityRule(BaseModel):
+    """The rule an invalid-values issue was found with. The user can edit it."""
+
+    min: float | None
+    max: float | None
+    reason: str
+    source: Literal["name", "data"]  # suggested from the column name, or from the data
+
+
+class NumberSummary(BaseModel):
+    """A number column's distribution, so the UI can preview rules the user adds."""
+
+    values: int
+    quantiles: list[float]  # the value at every half percentile, 0 to 100 (201 entries)
+
+
 class Issue(BaseModel):
     id: str
     type: str
@@ -185,9 +233,13 @@ class Issue(BaseModel):
     review: ValueReview | None = None
     # Outlier columns only: the suggested cut-offs and data to preview others.
     cutoffs: OutlierCutoffs | None = None
+    # Invalid-values issues only: the rule the values break.
+    rule: ValidityRule | None = None
 
 
 class AnalyzeResponse(BaseModel):
     rows: int
     columns: list[str]
     issues: list[Issue]
+    # Number columns the user can add a validity rule to (not IDs or codes), by name.
+    numbers: dict[str, NumberSummary] = Field(default_factory=dict)

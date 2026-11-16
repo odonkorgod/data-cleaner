@@ -125,6 +125,15 @@ def is_identifier(series: pd.Series) -> bool:
     return bool((numbers % 1 == 0).all()) and _looks_like_ids(numbers, series.name)
 
 
+# For previews in the UI: the value at every half percentile, 0 to 100 (201 points).
+QUANTILE_POINTS = [i / 200 for i in range(201)]
+
+
+def quantile_grid(numbers: pd.Series) -> list[float]:
+    """Real data values at every half percentile, so previews never show invented numbers."""
+    return numbers.quantile(QUANTILE_POINTS, interpolation="nearest").tolist()
+
+
 def present_numbers(series: pd.Series) -> pd.Series:
     """The column's values that are numbers, ignoring empty cells and stray text."""
     return to_numbers(series).dropna()
