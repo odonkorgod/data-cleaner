@@ -1,7 +1,15 @@
 // These mirror backend/app/models.py. Keep the two in sync.
 
+export type CaseStyle = "keep" | "title" | "upper" | "lower";
+
 export type FixStep =
-  | { op: "standardize_values"; column: string }
+  | {
+      op: "standardize_values";
+      column: string;
+      case: CaseStyle;
+      /** Group key -> group key it becomes. Keys come from the issue's `review`. */
+      merge: Record<string, string>;
+    }
   | { op: "fix_type_mismatch"; column: string; action: "clear" | "drop_rows" }
   | {
       op: "fix_outliers";
@@ -49,6 +57,26 @@ export interface Issue {
   detail: string | null;
   samples: Record<string, unknown>[];
   fixes: FixOption[];
+  /** Inconsistent text columns only: the values to review. */
+  review: ValueReview | null;
+}
+
+/** One distinct value of a text column (spelling variants already grouped). */
+export interface ReviewValue {
+  key: string;
+  count: number;
+  /** How the value is written under each case style. */
+  display: Record<CaseStyle, string>;
+  /** Key of the value we suggest merging this one into, and why. */
+  suggestion: string | null;
+  reason: string | null;
+}
+
+export interface ValueReview {
+  /** The column's most common case style. */
+  case: CaseStyle;
+  /** Most common first. */
+  values: ReviewValue[];
 }
 
 export interface AnalyzeResponse {
@@ -61,4 +89,11 @@ export interface AnalyzeResponse {
 export interface Choice {
   fixId: string;
   value: string;
+  /** For issues with a review: the chosen case style and merges. */
+  review?: ReviewChoice;
+}
+
+export interface ReviewChoice {
+  case: CaseStyle;
+  merge: Record<string, string>;
 }

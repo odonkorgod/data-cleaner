@@ -1,8 +1,8 @@
 """Helpers for reasoning about cell values, shared by detectors and transforms.
 
 Every cell is text (see csv_io.py). These helpers decide when text is a number, which numbers
-are outliers, and which spellings are variants of the same value. Detectors and transforms
-both call them, so what the user is shown and what a fix does always agree.
+are outliers, and what kind of data a column holds (text categories are in categories.py).
+Detectors and transforms both call them, so what the user is shown and what a fix does agree.
 """
 
 import re
@@ -128,7 +128,9 @@ def column_kind(series: pd.Series) -> ColumnKind:
             return "unique"
         return "continuous"
 
-    repeats = present.nunique() <= MAX_DISTINCT_SHARE * len(present)
+    # "New York" and "new york" are one category, so count distinct values case-insensitively.
+    distinct = present.astype(str).map(normalize_text).nunique()
+    repeats = distinct <= MAX_DISTINCT_SHARE * len(present)
     return "nominal" if repeats else "unique"
 
 
@@ -213,27 +215,3 @@ def outlier_range(series: pd.Series) -> tuple[float, float] | None:
 def normalize_text(value: str) -> str:
     """The comparison key for spelling variants: trimmed, single-spaced, case-insensitive."""
     return " ".join(value.split()).casefold()
-
-
-def canonical_spellings(series: pd.Series) -> dict[str, str]:
-    """Map every variant spelling to the canonical one for its group.
-
-    Values that differ only in case or whitespace form a group. The canonical spelling is the
-    most common one, ties going to the one that appears first. Values already in canonical
-    form, and values with no variants, are left out of the mapping.
-    """
-    present = series.dropna()
-    counts = present.value_counts()
-    groups: dict[str, list[str]] = {}
-    for value in present.drop_duplicates():  # order of first appearance
-        groups.setdefault(normalize_text(value), []).append(value)
-
-    mapping: dict[str, str] = {}
-    for spellings in groups.values():
-        if len(spellings) < 2:
-            continue
-        canonical = max(spellings, key=lambda s: counts[s])  # max() keeps the first on ties
-        for spelling in spellings:
-            if spelling != canonical:
-                mapping[spelling] = canonical
-    return mapping

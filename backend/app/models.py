@@ -9,16 +9,34 @@ Two families live here:
 
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, Field, FiniteFloat, model_validator
+from pydantic import BaseModel, Field, FiniteFloat, field_validator, model_validator
+
+# Most merges a single standardize step may carry. The UI lists at most 100 values per column,
+# so this is generous; it only bounds request size.
+MAX_MERGES = 1000
 
 # --------------------------------------------------------------------------- fix steps
 
 
 class StandardizeValues(BaseModel):
-    """Rewrite spelling variants (case, whitespace) to the most common spelling."""
+    """Write a text column consistently. See categories.py.
+
+    Values differing only in case or spacing always become one. ``case`` picks how they're
+    written; ``keep`` uses each value's most common spelling. ``merge`` folds other values in:
+    it maps a value's group key (as listed in the issue's ``review``) to the key it becomes.
+    """
 
     op: Literal["standardize_values"] = "standardize_values"
     column: str
+    case: Literal["keep", "title", "upper", "lower"] = "keep"
+    merge: dict[str, str] = Field(default_factory=dict)
+
+    @field_validator("merge")
+    @classmethod
+    def _bounded(cls, merge: dict[str, str]) -> dict[str, str]:
+        if len(merge) > MAX_MERGES:
+            raise ValueError(f"at most {MAX_MERGES} merges are allowed")
+        return merge
 
 
 class FixTypeMismatch(BaseModel):
@@ -101,6 +119,25 @@ class FixOption(BaseModel):
     recommended: bool = False
 
 
+class ReviewValue(BaseModel):
+    """One distinct value of a text column, for the user to review and merge."""
+
+    key: str  # identifies the value in a step's ``merge``
+    count: int
+    # How the value is written under each case style ("keep", "title", "upper", "lower").
+    display: dict[str, str]
+    # Key of the value we suggest merging this one into, and why.
+    suggestion: str | None = None
+    reason: str | None = None
+
+
+class ValueReview(BaseModel):
+    """The distinct values of a text column, so the user can choose a case and merge values."""
+
+    case: Literal["keep", "title", "upper", "lower"]  # detected from the column
+    values: list[ReviewValue]  # most common first
+
+
 class Issue(BaseModel):
     id: str
     type: str
@@ -113,6 +150,8 @@ class Issue(BaseModel):
     detail: str | None = None
     samples: list[dict[str, Any]]
     fixes: list[FixOption]
+    # Inconsistent text columns only: the values to review.
+    review: ValueReview | None = None
 
 
 class AnalyzeResponse(BaseModel):

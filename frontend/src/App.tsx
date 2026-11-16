@@ -1,6 +1,15 @@
-import { useMemo, useState } from "react";
+import { Fragment, useMemo, useState } from "react";
 import { analyze, transform } from "./api";
-import type { AnalyzeResponse, Category, Choice, FixStep, Issue } from "./types";
+import type {
+  AnalyzeResponse,
+  CaseStyle,
+  Category,
+  Choice,
+  FixStep,
+  Issue,
+  ReviewChoice,
+  ValueReview,
+} from "./types";
 
 /** The groups issues are summarised under, in display order. */
 const CATEGORIES: { id: Category; label: string; hint: string; unit: string }[] = [
@@ -8,7 +17,7 @@ const CATEGORIES: { id: Category; label: string; hint: string; unit: string }[] 
   {
     id: "inconsistent",
     label: "Inconsistent data",
-    hint: "The same value written with different case or spacing.",
+    hint: "The same value written differently: case, spacing, punctuation or typos.",
     unit: "cell",
   },
   {
@@ -49,11 +58,125 @@ function buildSteps(issues: Issue[], choices: Record<string, Choice>): FixStep[]
     if (!fix || !fix.step) continue; // "leave as is"
     if (fix.step.op === "fill_nulls" && fix.needs_value) {
       steps.push({ ...fix.step, value: choice.value });
+    } else if (fix.step.op === "standardize_values" && choice.review) {
+      steps.push({ ...fix.step, case: choice.review.case, merge: choice.review.merge });
     } else {
       steps.push(fix.step);
     }
   }
   return steps;
+}
+
+const CASE_LABELS: Record<CaseStyle, string> = {
+  title: "Title Case",
+  upper: "UPPERCASE",
+  lower: "lowercase",
+  keep: "As written (most common spelling)",
+};
+
+/** The starting point for a review: the column's own case style and our suggested merges. */
+function initialReview(review: ValueReview): ReviewChoice {
+  const merge: Record<string, string> = {};
+  for (const v of review.values) if (v.suggestion) merge[v.key] = v.suggestion;
+  return { case: review.case, merge };
+}
+
+/** A fresh choice for an issue: "leave as is", with any review at its starting point. */
+function initialChoice(issue: Issue): Choice {
+  return issue.review
+    ? { fixId: "leave", value: "", review: initialReview(issue.review) }
+    : { fixId: "leave", value: "" };
+}
+
+function ReviewPanel({
+  review,
+  choice,
+  onChange,
+}: {
+  review: ValueReview;
+  choice: ReviewChoice;
+  onChange: (next: ReviewChoice) => void;
+}) {
+  const byKey = new Map(review.values.map((v) => [v.key, v]));
+  const shown = (key: string) => byKey.get(key)?.display[choice.case] ?? key;
+  const merged = Object.keys(choice.merge).length;
+
+  function mergeInto(key: string, target: string) {
+    const merge = { ...choice.merge };
+    if (target === "") {
+      delete merge[key];
+    } else {
+      merge[key] = target;
+      // Anything merged into this value follows it, so merges never chain.
+      for (const [k, t] of Object.entries(merge)) if (t === key) merge[k] = target;
+    }
+    onChange({ ...choice, merge });
+  }
+
+  return (
+    <details className="review">
+      <summary>
+        Review {review.values.length} values{merged > 0 ? ` · ${merged} merged` : ""}
+      </summary>
+      <label className="case-picker">
+        Write values in
+        <select
+          value={choice.case}
+          onChange={(e) => onChange({ ...choice, case: e.target.value as CaseStyle })}
+        >
+          {(Object.keys(CASE_LABELS) as CaseStyle[]).map((c) => (
+            <option key={c} value={c}>
+              {CASE_LABELS[c]}
+              {c === review.case ? " (most common)" : ""}
+            </option>
+          ))}
+        </select>
+      </label>
+      <div className="table-wrap review-list">
+        <table className="values">
+          <thead>
+            <tr>
+              <th>Value</th>
+              <th>Rows</th>
+              <th>Merge into</th>
+            </tr>
+          </thead>
+          <tbody>
+            {review.values.map((v) => {
+              const target = choice.merge[v.key] ?? "";
+              return (
+                <tr key={v.key} className={target ? "merged" : undefined}>
+                  <td className="value">{v.display[choice.case]}</td>
+                  <td className="rows">{v.count.toLocaleString()}</td>
+                  <td>
+                    <select
+                      aria-label={`Merge ${v.display[choice.case]} into`}
+                      value={target}
+                      onChange={(e) => mergeInto(v.key, e.target.value)}
+                    >
+                      <option value="">Keep as its own value</option>
+                      {review.values
+                        .filter((o) => o.key !== v.key && !choice.merge[o.key])
+                        .map((o) => (
+                          <option key={o.key} value={o.key}>
+                            {o.display[choice.case]}
+                          </option>
+                        ))}
+                    </select>
+                    {v.suggestion && (
+                      <span className="suggestion">
+                        Suggested: {shown(v.suggestion)} ({v.reason?.toLowerCase()})
+                      </span>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </details>
+  );
 }
 
 function download(blob: Blob, filename: string) {
@@ -132,7 +255,7 @@ export default function App() {
       setReport(result);
       // Default every issue to "leave as is" so nothing changes unless the user chooses.
       const defaults: Record<string, Choice> = {};
-      for (const issue of result.issues) defaults[issue.id] = { fixId: "leave", value: "" };
+      for (const issue of result.issues) defaults[issue.id] = initialChoice(issue);
       setChoices(defaults);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Something went wrong.");
@@ -160,13 +283,19 @@ export default function App() {
     setChoices((prev) => ({ ...prev, [issueId]: { ...prev[issueId], ...patch } }));
   }
 
-  /** Reset these issues to "leave as is", forgetting any typed fill values. */
+  /** Reset these issues to "leave as is", forgetting typed values and review edits. */
   function clearFixes(issues: Issue[]) {
     setChoices((prev) => {
       const next = { ...prev };
-      for (const issue of issues) next[issue.id] = { fixId: "leave", value: "" };
+      for (const issue of issues) next[issue.id] = initialChoice(issue);
       return next;
     });
+  }
+
+  /** Editing a review means the user wants it applied, so select the standardize fix too. */
+  function setReview(issue: Issue, review: ReviewChoice) {
+    const standardize = issue.fixes.find((f) => f.step?.op === "standardize_values");
+    setChoice(issue.id, { review, ...(standardize ? { fixId: standardize.id } : {}) });
   }
 
   /** Switch every issue that has a recommendation to it. Others keep their current choice. */
@@ -284,43 +413,59 @@ export default function App() {
                           const choice = choices[issue.id];
                           const selected = issue.fixes.find((f) => f.id === choice?.fixId);
                           return (
-                            <tr key={issue.id}>
-                              <td className="column">
-                                <span className="name">
-                                  {g.id === "duplicates" ? "All columns" : issue.columns.join(", ")}
-                                </span>
-                                {issue.detail && <span className="detail">{issue.detail}</span>}
-                              </td>
-                              <td className="affected">
-                                {issue.count.toLocaleString()}{" "}
-                                <span className="muted">{percent(issue.count, report.rows)}</span>
-                              </td>
-                              <td>
-                                <div className="fix">
-                                  <select
-                                    aria-label={`Fix for ${issue.title}`}
-                                    value={choice?.fixId ?? "leave"}
-                                    onChange={(e) => setChoice(issue.id, { fixId: e.target.value })}
-                                  >
-                                    {issue.fixes.map((f) => (
-                                      <option key={f.id} value={f.id}>
-                                        {f.label}
-                                        {f.recommended ? " (recommended)" : ""}
-                                      </option>
-                                    ))}
-                                  </select>
-                                  {selected?.needs_value && (
-                                    <input
-                                      type="text"
-                                      aria-label={`Value to fill ${issue.columns[0]} with`}
-                                      placeholder="Value to fill with"
-                                      value={choice?.value ?? ""}
-                                      onChange={(e) => setChoice(issue.id, { value: e.target.value })}
-                                    />
+                            <Fragment key={issue.id}>
+                              <tr>
+                                <td className="column">
+                                  <span className="name">
+                                    {g.id === "duplicates" ? "All columns" : issue.columns.join(", ")}
+                                  </span>
+                                  {/* Rows with a value review show the changes there instead. */}
+                                  {issue.detail && !issue.review && (
+                                    <span className="detail">{issue.detail}</span>
                                   )}
-                                </div>
-                              </td>
-                            </tr>
+                                </td>
+                                <td className="affected">
+                                  {issue.count.toLocaleString()}{" "}
+                                  <span className="muted">{percent(issue.count, report.rows)}</span>
+                                </td>
+                                <td>
+                                  <div className="fix">
+                                    <select
+                                      aria-label={`Fix for ${issue.title}`}
+                                      value={choice?.fixId ?? "leave"}
+                                      onChange={(e) => setChoice(issue.id, { fixId: e.target.value })}
+                                    >
+                                      {issue.fixes.map((f) => (
+                                        <option key={f.id} value={f.id}>
+                                          {f.label}
+                                          {f.recommended ? " (recommended)" : ""}
+                                        </option>
+                                      ))}
+                                    </select>
+                                    {selected?.needs_value && (
+                                      <input
+                                        type="text"
+                                        aria-label={`Value to fill ${issue.columns[0]} with`}
+                                        placeholder="Value to fill with"
+                                        value={choice?.value ?? ""}
+                                        onChange={(e) => setChoice(issue.id, { value: e.target.value })}
+                                      />
+                                    )}
+                                  </div>
+                                </td>
+                              </tr>
+                              {issue.review && choice?.review && (
+                                <tr className="review-row">
+                                  <td colSpan={3}>
+                                    <ReviewPanel
+                                      review={issue.review}
+                                      choice={choice.review}
+                                      onChange={(next) => setReview(issue, next)}
+                                    />
+                                  </td>
+                                </tr>
+                              )}
+                            </Fragment>
                           );
                         })}
                       </tbody>
