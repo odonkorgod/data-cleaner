@@ -17,6 +17,7 @@ from app.config import ALLOWED_ORIGINS, MAX_UPLOAD_BYTES
 from app.csv_io import CsvReadError, read_csv, write_csv
 from app.detectors import run_detectors
 from app.detectors.invalid import number_summaries
+from app.detectors.missing import sparse_columns
 from app.models import AnalyzeResponse, FixStep
 from app.placeholders import placeholder_frame
 from app.transform import TransformError, apply_steps
@@ -56,18 +57,20 @@ def health() -> dict[str, str]:
 async def analyze(file: UploadFile = File(...)) -> AnalyzeResponse:
     raw = await _read_upload(file)
     try:
-        df, _ = read_csv(raw)
+        df, fmt = read_csv(raw)
     except CsvReadError as e:
         raise HTTPException(status_code=400, detail=str(e)) from None
 
     placeholders = placeholder_frame(df)  # "N/A", "NULL" and the like
     issues = run_detectors(df, placeholders)
+    blanked = df.mask(placeholders)
     logger.info("analyzed rows=%d cols=%d issues=%d", len(df), len(df.columns), len(issues))
     return AnalyzeResponse(
         rows=len(df),
         columns=[str(c) for c in df.columns],
         issues=issues,
-        numbers=number_summaries(df.mask(placeholders)),
+        numbers=number_summaries(blanked),
+        sparse_columns=sparse_columns(blanked, fmt.unnamed),
     )
 
 

@@ -10,6 +10,7 @@ from app.categories import MergeError, standardize_mapping
 from app.models import (
     STEP_ORDER,
     ClearPlaceholders,
+    DropColumns,
     DropDuplicates,
     DropNullRows,
     FillNulls,
@@ -39,6 +40,14 @@ class TransformError(ValueError):
 def _require_column(df: pd.DataFrame, column: str) -> None:
     if column not in df.columns:
         raise TransformError(f"Column '{column}' does not exist in this file.")
+
+
+def _drop_columns(df: pd.DataFrame, step: DropColumns) -> pd.DataFrame:
+    for column in step.columns:
+        _require_column(df, column)
+    if set(df.columns) <= set(step.columns):
+        raise TransformError("Can't remove every column.")
+    return df.drop(columns=step.columns)
 
 
 def _standardize_values(df: pd.DataFrame, step: StandardizeValues) -> pd.DataFrame:
@@ -211,7 +220,9 @@ def apply_steps(df: pd.DataFrame, steps: list[FixStep]) -> pd.DataFrame:
     cleared: set[str] = set()
     result = blanked
     for step in ordered:
-        if isinstance(step, StandardizeValues):
+        if isinstance(step, DropColumns):
+            result = _drop_columns(result, step)
+        elif isinstance(step, StandardizeValues):
             result = _standardize_values(result, step)
         elif isinstance(step, FixTypeMismatch):
             result = _fix_type_mismatch(result, step)

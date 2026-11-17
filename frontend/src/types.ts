@@ -3,6 +3,7 @@
 export type CaseStyle = "keep" | "title" | "upper" | "lower";
 
 export type FixStep =
+  | { op: "drop_columns"; columns: string[] }
   | {
       op: "standardize_values";
       column: string;
@@ -134,6 +135,16 @@ export interface AnalyzeResponse {
   issues: Issue[];
   /** Number columns a rule can be added to (not IDs or codes), by name. */
   numbers: Record<string, NumberSummary>;
+  /** Mostly empty columns, emptiest first. Removed unless the user keeps them. */
+  sparse_columns: SparseColumn[];
+}
+
+export interface SparseColumn {
+  column: string;
+  /** Empty cells, placeholders like "N/A" included. */
+  missing: number;
+  /** The header cell was blank, so pandas named it "Unnamed: 3". */
+  unnamed: boolean;
 }
 
 /** What the user has picked for one issue. */

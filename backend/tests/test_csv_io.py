@@ -99,3 +99,29 @@ def test_ascii_files_are_written_as_utf8():
     df.loc[0, "b"] = "é"
     _, encoding = write_csv(df, CsvFormat(delimiter=",", encoding="ascii"))
     assert encoding == "utf-8"
+
+
+# ---------------------------------------------- "\r" line endings (old Mac, Excel for Mac)
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [b"a;b;c\r1;2;3\r4;5;6\r", b"a,,c\r1,x,3\r", b'name,note\r\n1,"line one\nline two"\r\n'],
+    ids=["semicolons", "blank header", "line break in a quoted cell"],
+)
+def test_any_line_endings_parse_and_round_trip(raw):
+    df, fmt = read_csv(raw)
+    assert len(df.columns) > 1  # the delimiter was found
+    assert write_csv(df, fmt)[0] == raw
+
+
+def test_cr_line_endings_get_the_right_delimiter():
+    df, fmt = read_csv(b"a;b;c\r1;2;3\r")
+    assert fmt.delimiter == ";" and fmt.line_terminator == "\r"
+    assert df.loc[0, "b"] == "2"
+
+
+def test_analyze_accepts_cr_line_endings(client):
+    res = client.post("/analyze", files={"file": ("d.csv", b"a,,c\r1,,3\r2,,\r", "text/csv")})
+    assert res.status_code == 200
+    assert res.json()["columns"] == ["a", "Unnamed: 1", "c"]

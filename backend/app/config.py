@@ -15,3 +15,7 @@ ALLOWED_ORIGINS = [
 
 # How many example rows to show per issue. Display only, never persisted.
 SAMPLE_ROWS = 3
+
+# Columns with at least this share of empty cells (placeholders like "N/A" included) are
+# removed by default. The UI lists them, and the user can keep any of them.
+DROP_COLUMN_MISSING_SHARE = float(os.getenv("DROP_COLUMN_MISSING_SHARE", "0.5"))

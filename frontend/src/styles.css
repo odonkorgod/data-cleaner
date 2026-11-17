@@ -221,6 +221,75 @@ button.link-button {
   text-underline-offset: 2px;
 }
 
+/* Mostly empty columns being removed: a collapsible card like the issue cards, above the
+   overview. Closed, it shows only the count. */
+details.notice {
+  margin: 0 0 1rem;
+  padding: 1rem;
+  border: 1px solid color-mix(in srgb, currentColor 25%, transparent);
+  border-radius: 8px;
+  font-size: 1rem;
+}
+
+.notice summary {
+  opacity: 1;
+}
+
+/* The heading sits on the summary's line, next to its marker. */
+.notice h2 {
+  display: inline;
+  margin: 0;
+  font-size: 1.05rem;
+}
+
+.notice h2 .muted {
+  font-weight: 500;
+}
+
+.notice .intro {
+  margin: 0.5rem 0 0.25rem;
+}
+
+.notice .hint {
+  margin: 0;
+}
+
+.notice ul {
+  max-height: 16rem;
+  overflow-y: auto;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 0.9rem;
+}
+
+.notice li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.25rem 0.75rem;
+  padding: 0.35rem 0;
+  border-bottom: 1px solid color-mix(in srgb, currentColor 12%, transparent);
+}
+
+.notice li:last-child {
+  border-bottom: 0;
+}
+
+.notice .name {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.notice li.removed .name {
+  text-decoration: line-through;
+  opacity: 0.6;
+}
+
+.notice li button {
+  margin-left: auto;
+}
+
 .overview {
   margin: 0 0 1.5rem;
   padding: 0;

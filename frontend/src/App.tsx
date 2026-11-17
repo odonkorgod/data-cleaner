@@ -22,6 +22,7 @@ import type {
   NumberSummary,
   OutlierCutoffs,
   ReviewChoice,
+  SparseColumn,
   RuleChoice,
   ValidityRule,
   ValueReview,
@@ -500,6 +501,76 @@ function ReviewPanel({
   );
 }
 
+/** "Empty" or "64% empty". Never rounds up to 100% unless every cell is empty. */
+function emptyShare(missing: number, rows: number): string {
+  if (missing >= rows) return "Empty";
+  return `${Math.min(99, Math.round((missing / rows) * 100))}% empty`;
+}
+
+/** The mostly empty columns being removed, each with a way to keep it. */
+function SparseNotice({
+  columns,
+  rows,
+  kept,
+  onChange,
+}: {
+  columns: SparseColumn[];
+  rows: number;
+  kept: string[];
+  onChange: (kept: string[]) => void;
+}) {
+  const removed = columns.filter((c) => !kept.includes(c.column)).length;
+  const toggle = (column: string) =>
+    onChange(kept.includes(column) ? kept.filter((c) => c !== column) : [...kept, column]);
+  return (
+    // Closed by default: the count is the news, the list is there to check or undo.
+    <details className="notice">
+      <summary>
+        <h2>
+          {removed > 0
+            ? `Removing ${plural(removed, "mostly empty column")}`
+            : "Keeping all mostly empty columns"}
+          {removed > 0 && kept.length > 0 && (
+            <span className="muted"> · {kept.length.toLocaleString()} kept</span>
+          )}
+        </h2>
+      </summary>
+      <div className="intro">
+        <p className="hint">At least half their cells are empty. Keep any you need.</p>
+        {columns.length > 1 && (
+          <button
+            className="link-button"
+            onClick={() => onChange(removed > 0 ? columns.map((c) => c.column) : [])}
+          >
+            {removed > 0 ? "Keep all" : "Remove all"}
+          </button>
+        )}
+      </div>
+      <ul>
+        {columns.map((c) => {
+          const isKept = kept.includes(c.column);
+          return (
+            <li key={c.column} className={isKept ? undefined : "removed"}>
+              <span className="name">{c.column}</span>
+              <span className="muted">
+                {emptyShare(c.missing, rows)}
+                {c.unnamed ? " · no header" : ""}
+              </span>
+              <button
+                className="link-button"
+                onClick={() => toggle(c.column)}
+                aria-label={`${isKept ? "Remove" : "Keep"} column ${c.column}`}
+              >
+                {isKept ? "Remove" : "Keep"}
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+    </details>
+  );
+}
+
 function download(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
@@ -550,14 +621,33 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   // Columns the user added an invalid-values rule for.
   const [userRules, setUserRules] = useState<string[]>([]);
+  // Mostly empty columns the user chose to keep. The others are removed.
+  const [kept, setKept] = useState<string[]>([]);
 
-  // Detected issues plus the user's own rules, which behave just like them.
-  const issues = useMemo(
-    () => (report ? [...report.issues, ...userRules.map(userRuleIssue)] : []),
-    [report, userRules],
+  const dropped = useMemo(
+    () =>
+      new Set(
+        (report?.sparse_columns ?? []).map((c) => c.column).filter((c) => !kept.includes(c)),
+      ),
+    [report, kept],
   );
 
-  const steps = useMemo(() => buildSteps(issues, choices), [issues, choices]);
+  // Detected issues plus the user's own rules, which behave just like them. Issues in removed
+  // columns are left out; duplicates span every column, so they stay.
+  const issues = useMemo(
+    () =>
+      (report ? [...report.issues, ...userRules.map(userRuleIssue)] : []).filter(
+        (i) => i.category === "duplicates" || !i.columns.some((c) => dropped.has(c)),
+      ),
+    [report, userRules, dropped],
+  );
+
+  const steps = useMemo(() => {
+    const fixes = buildSteps(issues, choices);
+    if (dropped.size === 0) return fixes;
+    return [{ op: "drop_columns", columns: [...dropped] } as FixStep, ...fixes];
+  }, [issues, choices, dropped]);
+  const found = issues.filter((i) => !i.id.startsWith(USER_RULE)).length;
 
   const groups = useMemo(
     () =>
@@ -572,7 +662,7 @@ export default function App() {
   // Number columns that could take a rule but don't have one yet.
   const ruleColumns = report
     ? Object.keys(report.numbers).filter(
-        (c) => !issues.some((i) => i.rule && i.columns[0] === c),
+        (c) => !dropped.has(c) && !issues.some((i) => i.rule && i.columns[0] === c),
       )
     : [];
   // The invalid-values card stays available for adding rules even when nothing was found.
@@ -585,6 +675,7 @@ export default function App() {
     setReport(null);
     setChoices({});
     setUserRules([]);
+    setKept([]);
     setError(null);
     setBusy(true);
     try {
@@ -710,11 +801,20 @@ export default function App() {
       {report && (
         <>
           <p className="summary">
-            {report.rows.toLocaleString()} rows · {report.columns.length} columns ·{" "}
-            {report.issues.length === 0
-              ? "no issues found"
-              : `${report.issues.length} issue${report.issues.length === 1 ? "" : "s"} found`}
+            {report.rows.toLocaleString()} rows ·{" "}
+            {plural(report.columns.length - dropped.size, "column")}
+            {dropped.size > 0 ? ` (${dropped.size} removed)` : ""} ·{" "}
+            {found === 0 ? "no issues found" : `${plural(found, "issue")} found`}
           </p>
+
+          {report.sparse_columns.length > 0 && (
+            <SparseNotice
+              columns={report.sparse_columns}
+              rows={report.rows}
+              kept={kept}
+              onChange={setKept}
+            />
+          )}
 
           <ul className="overview">
             {groups.map((g) => (

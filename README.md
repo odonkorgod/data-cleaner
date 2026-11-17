@@ -12,13 +12,14 @@ A web app for analysts. Upload a messy CSV, review the data quality issues it fi
 
 The server is stateless, so the browser keeps the file between steps and re-sends it. Uploads are capped at 25 MB (set `MAX_UPLOAD_MB` to change it).
 
-**Untouched data stays untouched.** Every cell is read as text, so leading zeros (`00123`) and integer formatting survive. Placeholders like `N/A` or `NULL` count as missing values (see below) but are written back exactly as uploaded unless the user picks a fix for them. The cleaned file is written with the upload's delimiter, encoding and line endings. Numbers are only parsed where a check or fix needs them (mean, median, outliers, type mismatch). See `backend/app/csv_io.py`.
+**Untouched data stays untouched.** Every cell is read as text, so leading zeros (`00123`) and integer formatting survive. Placeholders like `N/A` or `NULL` count as missing values (see below) but are written back exactly as uploaded unless the user picks a fix for them. Blank and repeated headers, which pandas renames (`Unnamed: 12`, `a.1`), are written back as they were. The cleaned file is written with the upload's delimiter, encoding and line endings. Numbers are only parsed where a check or fix needs them (mean, median, outliers, type mismatch). See `backend/app/csv_io.py`.
 
 ### Fix steps
 
 Each fix is a small JSON object discriminated by `op`, validated with Pydantic (`backend/app/models.py`) and mirrored in TypeScript (`frontend/src/types.ts`):
 
 ```json
+{"op": "drop_columns", "columns": ["Unnamed: 12", "fax"]}
 {"op": "standardize_values", "column": "city", "case": "title", "merge": {"new yrok": "new york"}, "rename": {"nyc": "New York City"}}
 {"op": "fix_type_mismatch", "column": "age", "action": "clear"}
 {"op": "fix_invalid", "column": "age", "min": 0, "max": 120, "action": "clear"}
@@ -69,6 +70,10 @@ Outliers are *detected* with the usual range (Tukey's fences, snapped to real va
 - **My own values**: for known valid ranges. Inputs start with the usual range.
 
 An empty box means no limit on that side. The UI previews how many values a choice affects (estimated from `cutoffs.quantiles`, the value at every half percentile) and warns above 10%. Percentile cut-offs always change some values, so they are a fix, never a way of detecting outliers.
+
+### Mostly empty columns
+
+Columns with at least half their cells empty (placeholders included) are removed by default: often they're blank columns from trailing commas, which pandas names `Unnamed: 12`. This is the one fix applied without the user choosing it, so the UI shows a collapsible card above the overview ("Removing 2 mostly empty columns"). Opened, it lists each column with how empty it is and whether its header was blank, and a **Keep** button for each: named columns first, then unnamed ones, each least empty first, so the columns most likely to hold data worth keeping lead the list. Issues in removed columns are hidden until the column is kept. `/analyze` returns them as `sparse_columns`; removing them is a normal `drop_columns` step, so the download matches the list. If every column qualifies, none is listed. Set `DROP_COLUMN_MISSING_SHARE` to change the threshold.
 
 ### Placeholders for missing values
 

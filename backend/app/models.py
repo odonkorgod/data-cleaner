@@ -20,6 +20,13 @@ MAX_VALUE_LENGTH = 500
 # --------------------------------------------------------------------------- fix steps
 
 
+class DropColumns(BaseModel):
+    """Remove whole columns, e.g. ones that are mostly empty."""
+
+    op: Literal["drop_columns"] = "drop_columns"
+    columns: list[str] = Field(min_length=1, max_length=10_000)
+
+
 class StandardizeValues(BaseModel):
     """Write a text column consistently. See categories.py.
 
@@ -154,7 +161,8 @@ class DropDuplicates(BaseModel):
 
 
 FixStep = Annotated[
-    StandardizeValues
+    DropColumns
+    | StandardizeValues
     | FixTypeMismatch
     | FixInvalid
     | FixOutliers
@@ -166,12 +174,14 @@ FixStep = Annotated[
 ]
 
 # Steps always run in this order, regardless of the order the user picked them:
+#   0. Remove columns first, so no other step spends time on them.
 #   1. Fix individual values: spellings, then stray text, then invalid values, then outliers.
 #      Invalid values go before outliers so they don't distort the usual range, and all of
 #      these go before fills so a mean or median fill isn't skewed by them.
 #   2. Fill gaps, then drop rows that still have gaps.
 #   3. Drop duplicates last, so rows made identical by earlier fixes are caught.
 STEP_ORDER: dict[str, int] = {
+    "drop_columns": 0,
     "standardize_values": 1,
     "fix_type_mismatch": 2,
     "fix_invalid": 3,
@@ -276,9 +286,20 @@ class Issue(BaseModel):
     rule: ValidityRule | None = None
 
 
+class SparseColumn(BaseModel):
+    """A mostly empty column, removed unless the user keeps it."""
+
+    column: str
+    missing: int  # empty cells, placeholders like "N/A" included
+    unnamed: bool  # the header cell was blank (pandas calls it "Unnamed: 3")
+
+
 class AnalyzeResponse(BaseModel):
     rows: int
     columns: list[str]
     issues: list[Issue]
+    # Columns removed by default for being mostly empty: named first, then unnamed, each least
+    # empty first. Their issues are still listed, for when the user keeps them.
+    sparse_columns: list[SparseColumn] = Field(default_factory=list)
     # Number columns the user can add a validity rule to (not IDs or codes), by name.
     numbers: dict[str, NumberSummary] = Field(default_factory=dict)
