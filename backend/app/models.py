@@ -14,6 +14,8 @@ from pydantic import BaseModel, Field, FiniteFloat, field_validator, model_valid
 # Most merges a single standardize step may carry. The UI lists at most 100 values per column,
 # so this is generous; it only bounds request size.
 MAX_MERGES = 1000
+# Longest value a user may type for a value in a review. Only bounds request size.
+MAX_VALUE_LENGTH = 500
 
 # --------------------------------------------------------------------------- fix steps
 
@@ -24,12 +26,15 @@ class StandardizeValues(BaseModel):
     Values differing only in case or spacing always become one. ``case`` picks how they're
     written; ``keep`` uses each value's most common spelling. ``merge`` folds other values in:
     it maps a value's group key (as listed in the issue's ``review``) to the key it becomes.
+    ``rename`` maps a group key to text the user typed, written exactly as typed (case style
+    doesn't apply), along with everything merged into that value.
     """
 
     op: Literal["standardize_values"] = "standardize_values"
     column: str
     case: Literal["keep", "title", "upper", "lower"] = "keep"
     merge: dict[str, str] = Field(default_factory=dict)
+    rename: dict[str, str] = Field(default_factory=dict)
 
     @field_validator("merge")
     @classmethod
@@ -37,6 +42,27 @@ class StandardizeValues(BaseModel):
         if len(merge) > MAX_MERGES:
             raise ValueError(f"at most {MAX_MERGES} merges are allowed")
         return merge
+
+    @field_validator("rename")
+    @classmethod
+    def _typed_values(cls, rename: dict[str, str]) -> dict[str, str]:
+        if len(rename) > MAX_MERGES:
+            raise ValueError(f"at most {MAX_MERGES} new values are allowed")
+        # Spaces at the ends are dropped: stray spaces are one of the inconsistencies fixed here.
+        rename = {key: text.strip() for key, text in rename.items()}
+        for text in rename.values():
+            if not text:
+                raise ValueError("new values must not be empty")
+            if len(text) > MAX_VALUE_LENGTH:
+                raise ValueError(f"new values must be at most {MAX_VALUE_LENGTH} characters")
+        return rename
+
+    @model_validator(mode="after")
+    def _merge_or_rename(self) -> "StandardizeValues":
+        # A value merged into another takes that value's spelling, so it can't have its own.
+        if any(key in self.merge and self.merge[key] != key for key in self.rename):
+            raise ValueError("a value cannot be both merged and given a new value")
+        return self
 
 
 class FixTypeMismatch(BaseModel):
@@ -178,7 +204,7 @@ class FixOption(BaseModel):
 
 
 class ReviewValue(BaseModel):
-    """One distinct value of a text column, for the user to review and merge."""
+    """One distinct value of a text column, for the user to review, merge or rewrite."""
 
     key: str  # identifies the value in a step's ``merge``
     count: int

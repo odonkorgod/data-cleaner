@@ -9,6 +9,8 @@ export type FixStep =
       case: CaseStyle;
       /** Group key -> group key it becomes. Keys come from the issue's `review`. */
       merge: Record<string, string>;
+      /** Group key -> text the user typed, written exactly as typed (no case style). */
+      rename?: Record<string, string>;
     }
   | { op: "fix_type_mismatch"; column: string; action: "clear" | "drop_rows" }
   | {
@@ -164,4 +166,6 @@ export interface CutoffChoice {
 export interface ReviewChoice {
   case: CaseStyle;
   merge: Record<string, string>;
+  /** Values the user typed their own text for, as typed. A key is never also in `merge`. */
+  rename: Record<string, string>;
 }

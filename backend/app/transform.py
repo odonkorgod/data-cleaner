@@ -44,10 +44,10 @@ def _require_column(df: pd.DataFrame, column: str) -> None:
 def _standardize_values(df: pd.DataFrame, step: StandardizeValues) -> pd.DataFrame:
     _require_column(df, step.column)
     try:
-        mapping = standardize_mapping(df[step.column], step.case, step.merge)
+        mapping = standardize_mapping(df[step.column], step.case, step.merge, rename=step.rename)
     except MergeError:
         raise TransformError(
-            f"The merges chosen for '{step.column}' don't match its values. Analyze the file again."
+            f"The values reviewed for '{step.column}' don't match the file. Analyze it again."
         ) from None
     if not mapping:
         return df

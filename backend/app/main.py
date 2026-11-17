@@ -79,10 +79,10 @@ async def transform(
     try:
         parsed = _steps_adapter.validate_json(steps)
     except ValidationError as e:
-        # include_input=False keeps submitted values out of the error payload.
-        raise HTTPException(
-            status_code=422, detail=e.errors(include_input=False, include_url=False)
-        ) from None
+        # include_input=False keeps submitted values out of the error payload. The context holds
+        # a custom validator's exception object, which can't be sent as JSON.
+        errors = e.errors(include_input=False, include_url=False, include_context=False)
+        raise HTTPException(status_code=422, detail=errors) from None
 
     raw = await _read_upload(file)
     try:
