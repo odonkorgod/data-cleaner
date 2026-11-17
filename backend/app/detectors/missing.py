@@ -15,10 +15,10 @@ from dataclasses import dataclass
 
 import pandas as pd
 
-from app.config import SAMPLE_ROWS
+from app.config import DROP_COLUMN_MISSING_SHARE, SAMPLE_ROWS
 from app.csv_io import to_json_records
 from app.detectors._format import quoted
-from app.models import FixOption, Issue
+from app.models import FixOption, Issue, SparseColumn
 from app.placeholders import placeholder_frame
 from app.values import (
     MAX_NORMAL_SKEW,
@@ -180,3 +180,26 @@ def detect_missing(df: pd.DataFrame, found: pd.DataFrame | None = None) -> list[
         )
 
     return issues
+
+
+def sparse_columns(blanked: pd.DataFrame, unnamed: set[str]) -> list[SparseColumn]:
+    """Columns with at least ``DROP_COLUMN_MISSING_SHARE`` of their cells empty.
+
+    Named columns come first, then unnamed ones (often blank columns from trailing commas),
+    each least empty first: the ones most likely to hold data worth keeping lead the list.
+
+    ``blanked`` has placeholders already turned into empty cells. Returns nothing if every
+    column qualifies: removing them all would leave no file.
+    """
+    rows = len(blanked)
+    if rows == 0:
+        return []
+    missing = blanked.isna().sum()
+    found = [
+        SparseColumn(column=str(c), missing=int(n), unnamed=str(c) in unnamed)
+        for c, n in missing.items()
+        if n / rows >= DROP_COLUMN_MISSING_SHARE
+    ]
+    if len(found) == len(blanked.columns):
+        return []
+    return sorted(found, key=lambda c: (c.unnamed, c.missing))  # stable: ties keep file order
