@@ -111,3 +111,11 @@ def test_transform_with_no_steps_returns_identical_bytes(client):
 def test_analyze_single_column_file(client):
     res = client.post("/analyze", files=_upload(b"email\na@x.com\n\nb@y.com\n"))
     assert res.json()["columns"] == ["email"]
+
+
+def test_rejected_steps_get_a_422_not_a_crash(client):
+    # Custom validators put the exception in the error's context, which isn't JSON.
+    step = {"op": "fix_outliers", "column": "a", "action": "cap", "lower": 5, "upper": 1}
+    steps = json.dumps([step])
+    res = client.post("/transform", files=_upload(b"a\n1\n"), data={"steps": steps})
+    assert res.status_code == 422

@@ -288,3 +288,65 @@ def test_equally_common_spellings_prefer_the_columns_usual_style():
         ("ada lovelace", 1), ("Ada Lovelace", 1), ("Grace Hopper", 1), ("Alan Turing", 1)
     )
     assert standardize_mapping(names, "keep") == {"ada lovelace": "Ada Lovelace"}
+
+
+# --------------------------------------------------------------------- the user's own values
+
+
+def test_own_value_is_written_exactly_as_typed():
+    # Case style doesn't apply to it, and every spelling in the group takes it.
+    mapping = standardize_mapping(CITIES, "upper", rename={"new york": "New York City"})
+    assert mapping["New York"] == mapping["new york"] == "New York City"
+    assert mapping["Accra"] == "ACCRA"
+
+
+def test_values_merged_into_a_renamed_value_take_its_new_text():
+    mapping = standardize_mapping(
+        CITIES, "title", {"nyc": "new york"}, rename={"new york": "New York City"}
+    )
+    assert mapping["NYC"] == "New York City"
+
+
+def test_own_value_for_an_unknown_value_is_rejected():
+    with pytest.raises(MergeError):
+        standardize_mapping(CITIES, "keep", rename={"paris": "Paris"})
+
+
+def test_own_value_is_trimmed():
+    step = StandardizeValues(column="city", rename={"nyc": "  New York City "})
+    assert step.rename == {"nyc": "New York City"}
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [
+        {"rename": {"nyc": "   "}},
+        {"rename": {"nyc": "x" * 501}},
+        {"rename": {"nyc": "New York City"}, "merge": {"nyc": "new york"}},
+    ],
+    ids=["empty", "too long", "also merged"],
+)
+def test_bad_own_values_are_rejected(fields):
+    with pytest.raises(ValidationError):
+        StandardizeValues(column="city", **fields)
+
+
+def test_transform_applies_own_values():
+    step = StandardizeValues(
+        column="city", case="title", merge={"new yrok": "nyc"}, rename={"nyc": "New York"}
+    )
+    out = apply_steps(frame(CITIES), [step])
+    # NYC (and the typo merged into it) now read "New York", the same as the title-cased group.
+    assert out["city"].value_counts().to_dict() == {"New York": 10, "Accra": 3}
+
+
+def test_own_values_are_not_echoed_in_validation_errors(client):
+    secret = "x" * 501
+    step = {"op": "standardize_values", "column": "city", "rename": {"nyc": secret}}
+    res = client.post(
+        "/transform",
+        files={"file": ("d.csv", b"city\nNYC\n", "text/csv")},
+        data={"steps": json.dumps([step])},
+    )
+    assert res.status_code == 422
+    assert secret not in res.text

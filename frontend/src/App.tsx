@@ -81,7 +81,8 @@ function buildSteps(issues: Issue[], choices: Record<string, Choice>): FixStep[]
     if (fix.step.op === "fill_nulls" && fix.needs_value) {
       steps.push({ ...fix.step, value: choice.value });
     } else if (fix.step.op === "standardize_values" && choice.review) {
-      steps.push({ ...fix.step, case: choice.review.case, merge: choice.review.merge });
+      const { case: style, merge, rename } = choice.review;
+      steps.push({ ...fix.step, case: style, merge, rename });
     } else if (fix.step.op === "fix_outliers" && choice.cutoffs) {
       steps.push(outlierStep(fix.step, choice.cutoffs));
     } else if (fix.step.op === "fix_invalid" && choice.rule) {
@@ -105,8 +106,17 @@ const CASE_LABELS: Record<CaseStyle, string> = {
 function initialReview(review: ValueReview): ReviewChoice {
   const merge: Record<string, string> = {};
   for (const v of review.values) if (v.suggestion) merge[v.key] = v.suggestion;
-  return { case: review.case, merge };
+  return { case: review.case, merge, rename: {} };
 }
+
+/** A value the user chose to type themselves but left empty. */
+function emptyOwnValue(review: ReviewChoice): boolean {
+  return Object.values(review.rename).some((text) => text.trim() === "");
+}
+
+// The "Merge into" option for typing your own value. Keys are case-folded, so an uppercase
+// name can never clash with one.
+const OWN_VALUE = "OWN";
 
 /** A fresh choice for an issue: "leave as is", with any review or cut-offs at their start. */
 function initialChoice(issue: Issue): Choice {
@@ -377,25 +387,41 @@ function ReviewPanel({
   onChange: (next: ReviewChoice) => void;
 }) {
   const byKey = new Map(review.values.map((v) => [v.key, v]));
-  const shown = (key: string) => byKey.get(key)?.display[choice.case] ?? key;
+  // How a value will be written: the user's own text (trimmed, as the server writes it), or in
+  // the chosen case style.
+  const shown = (key: string) =>
+    choice.rename[key]?.trim() || (byKey.get(key)?.display[choice.case] ?? key);
   const merged = Object.keys(choice.merge).length;
+  const renamed = Object.keys(choice.rename).length;
 
-  function mergeInto(key: string, target: string) {
+  function pick(key: string, option: string) {
     const merge = { ...choice.merge };
-    if (target === "") {
+    const rename = { ...choice.rename };
+    if (option === OWN_VALUE) {
       delete merge[key];
+      // Start from how it's written now, so a small fix is a small edit.
+      rename[key] = byKey.get(key)?.display[choice.case] ?? key;
+    } else if (option === "") {
+      delete merge[key];
+      delete rename[key];
     } else {
-      merge[key] = target;
+      delete rename[key]; // it takes the spelling of the value it's merged into
+      merge[key] = option;
       // Anything merged into this value follows it, so merges never chain.
-      for (const [k, t] of Object.entries(merge)) if (t === key) merge[k] = target;
+      for (const [k, t] of Object.entries(merge)) if (t === key) merge[k] = option;
     }
-    onChange({ ...choice, merge });
+    onChange({ ...choice, merge, rename });
   }
+
+  const counts = [
+    merged > 0 ? `${merged} merged` : "",
+    renamed > 0 ? `${renamed} typed` : "",
+  ].filter(Boolean);
 
   return (
     <details className="review">
       <summary>
-        Review {review.values.length} values{merged > 0 ? ` · ${merged} merged` : ""}
+        Review {review.values.length} values{counts.map((c) => ` · ${c}`).join("")}
       </summary>
       <label className="case-picker">
         Write values in
@@ -423,26 +449,42 @@ function ReviewPanel({
           <tbody>
             {review.values.map((v) => {
               const target = choice.merge[v.key] ?? "";
+              const own = choice.rename[v.key];
+              const written = v.display[choice.case];
               return (
                 <tr key={v.key} className={target ? "merged" : undefined}>
-                  <td className="value">{v.display[choice.case]}</td>
+                  <td className="value">{written}</td>
                   <td className="rows">{v.count.toLocaleString()}</td>
                   <td>
                     <select
-                      aria-label={`Merge ${v.display[choice.case]} into`}
-                      value={target}
-                      onChange={(e) => mergeInto(v.key, e.target.value)}
+                      aria-label={`Merge ${written} into`}
+                      value={own !== undefined ? OWN_VALUE : target}
+                      onChange={(e) => pick(v.key, e.target.value)}
                     >
                       <option value="">Keep as its own value</option>
+                      <option value={OWN_VALUE}>My own value…</option>
                       {review.values
                         .filter((o) => o.key !== v.key && !choice.merge[o.key])
                         .map((o) => (
                           <option key={o.key} value={o.key}>
-                            {o.display[choice.case]}
+                            {shown(o.key)}
                           </option>
                         ))}
                     </select>
-                    {v.suggestion && (
+                    {own !== undefined && (
+                      <input
+                        type="text"
+                        className="own-value"
+                        aria-label={`New value for ${written}`}
+                        placeholder="Type a value"
+                        maxLength={500}
+                        value={own}
+                        onChange={(e) =>
+                          onChange({ ...choice, rename: { ...choice.rename, [v.key]: e.target.value } })
+                        }
+                      />
+                    )}
+                    {v.suggestion && own === undefined && (
                       <span className="suggestion">
                         Suggested: {shown(v.suggestion)} ({v.reason?.toLowerCase()})
                       </span>
@@ -642,6 +684,7 @@ export default function App() {
     const choice = choices[issue.id];
     if (!choice || choice.fixId === "leave") return false;
     if (choice.cutoffs && cutoffProblem(choice.cutoffs) !== null) return true;
+    if (choice.review && emptyOwnValue(choice.review)) return true;
     return choice.rule ? rangeProblem(choice.rule.min, choice.rule.max, "Limit") !== null : false;
   });
 

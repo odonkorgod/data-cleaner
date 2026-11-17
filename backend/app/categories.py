@@ -317,7 +317,9 @@ def suggest_merges(groups: dict[str, ValueGroup]) -> dict[str, Suggestion]:
 
 
 class MergeError(ValueError):
-    """Merges name a value that isn't in the column, or loop. Never includes values."""
+    """Merges or new values name a value that isn't in the column, or loop.
+
+    Never includes values."""
 
 
 def _resolve(merge: dict[str, str], groups: dict[str, ValueGroup]) -> dict[str, str]:
@@ -341,18 +343,24 @@ def standardize_mapping(
     style: CaseStyle,
     merge: dict[str, str] | None = None,
     groups: dict[str, ValueGroup] | None = None,
+    rename: dict[str, str] | None = None,
 ) -> dict[str, str]:
     """Map each spelling that changes to its standardized value.
 
     ``merge`` maps group keys (see ``group_values``) to the group key they should become.
+    ``rename`` maps group keys to text written exactly as given, instead of in ``style``; values
+    merged into a renamed one take its new text too.
     Pass ``groups`` if already computed for this series, to avoid grouping twice.
     """
     groups = groups if groups is not None else group_values(series)
     resolved = _resolve(merge or {}, groups)
+    rename = rename or {}
+    if any(key not in groups for key in rename):
+        raise MergeError("unknown value")
     mapping: dict[str, str] = {}
     for group in groups.values():
         target = groups[resolved.get(group.key, group.key)]
-        new = target.display(style)
+        new = rename.get(target.key) or target.display(style)
         for spelling, _ in group.spellings:
             if spelling != new:
                 mapping[spelling] = new

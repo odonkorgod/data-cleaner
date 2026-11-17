@@ -19,7 +19,7 @@ The server is stateless, so the browser keeps the file between steps and re-send
 Each fix is a small JSON object discriminated by `op`, validated with Pydantic (`backend/app/models.py`) and mirrored in TypeScript (`frontend/src/types.ts`):
 
 ```json
-{"op": "standardize_values", "column": "city", "case": "title", "merge": {"new yrok": "new york"}}
+{"op": "standardize_values", "column": "city", "case": "title", "merge": {"new yrok": "new york"}, "rename": {"nyc": "New York City"}}
 {"op": "fix_type_mismatch", "column": "age", "action": "clear"}
 {"op": "fix_invalid", "column": "age", "min": 0, "max": 120, "action": "clear"}
 {"op": "fix_outliers", "column": "age", "lower": 18, "upper": 90, "action": "cap"}
@@ -47,11 +47,12 @@ Thresholds live in `backend/app/values.py` and `backend/app/categories.py`.
 
 ### Reviewing inconsistent categories
 
-For a text column of repeating categories with at most 100 distinct values, the issue includes a `review`: each value (case and spacing variants already grouped) with its row count, how it looks in each case style, and a suggested merge where one fits. In the UI the user picks the case style and can merge any value into another; nothing is applied until they choose. Other text columns (names, free text, or more than 100 values) are only cleaned of case and spacing variants.
+For a text column of repeating categories with at most 100 distinct values, the issue includes a `review`: each value (case and spacing variants already grouped) with its row count, how it looks in each case style, and a suggested merge where one fits. In the UI the user picks the case style and can merge any value into another, or type their own value for it ("My own value…"); nothing is applied until they choose. Other text columns (names, free text, or more than 100 values) are only cleaned of case and spacing variants.
 
 - **Case style:** the column's most common style by cells (Title Case, UPPERCASE or lowercase). Guards keep correct values intact: deliberate mixed case (`eBay`, `McDonald`, `O'Neil`) is never changed; in Title Case, short all-caps values (`USA`, `NASA`) and acronyms inside values (`NYC Office`) are kept, small words stay lowercase (`Bank of America`), and only the first letter of a word is capitalized (`They're`, not `They'Re`).
 - **Suggested merges:** same letters with different punctuation (`N.Y.C.` → `NYC`), or typos: one edit in words of 5–8 letters, two from 9, only swapped neighbours at 4 letters, none below. The shorter word sets the allowance, so `Austria` is not a typo of `Australia`; values with different numbers (`Room 101`/`Room 102`) never match. Rare values merge into common ones, never in chains.
 - **Merges** are keyed by the value's group key (trimmed, single-spaced, lowercased), so they stay valid whichever case style is chosen.
+- **Own values** (`rename`: group key → text) are written exactly as typed, minus spaces at the ends, whatever the case style; values merged into one take its new text too. A value is either merged or given its own text, not both.
 
 ### Invalid values vs outliers
 
